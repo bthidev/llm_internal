@@ -1,0 +1,6 @@
+model_dir: checkpoints
+eval_file: data/processed/eval.jsonl
+max_new_tokens: 512
+min_plain_chat_chars: 5
+tool_call_accuracy_threshold: 0.8
+plain_chat_pass_rate_threshold: 0.8
