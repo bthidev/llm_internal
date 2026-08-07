@@ -151,3 +151,34 @@ def export_data_for_mlx(data_dir: str | Path, tokenizer, out_dir: str | Path) ->
             for ex in examples:
                 text = build_training_text(ex["messages"], tokenizer)
                 f.write(json.dumps({"text": text}) + "\n")
+
+
+
+def run_mlx_training(cfg: TrainConfig) -> None:
+    """Metal-only: quantizes the base model to a local 4-bit MLX copy under
+    cfg.output_dir/mlx_base (this quantized-base-plus-adapter combination is
+    mlx-lm's QLoRA -- there is no separate QLoRA flag), renders the
+    train/val splits to mlx-lm's text format under cfg.output_dir/mlx_data
+    via export_data_for_mlx, and runs mlx_lm.lora's training loop. Adapters
+    are written to cfg.output_dir (adapters.safetensors + adapter_config.json)
+    by mlx_lm.lora itself."""
+    import types
+
+    from mlx_lm import convert, load as mlx_load
+    from mlx_lm.lora import run as mlx_lora_run
+
+    from llm_internal.train.sft import load_split
+
+    output_dir = Path(cfg.output_dir)
+    base_dir = output_dir / "mlx_base"
+    data_dir = output_dir / "mlx_data"
+
+    if not base_dir.exists():
+        convert(cfg.base_model, mlx_path=str(base_dir), quantize=True, q_bits=4)
+
+    _, tokenizer = mlx_load(str(base_dir))
+    export_data_for_mlx(cfg.data_dir, tokenizer, data_dir)
+
+    train_examples = load_split(Path(cfg.data_dir) / "train.jsonl")
+    args_dict = build_mlx_training_args(cfg, base_dir, data_dir, len(train_examples))
+    mlx_lora_run(types.SimpleNamespace(**args_dict))
