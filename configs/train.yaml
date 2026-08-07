@@ -19,4 +19,6 @@ gradient_accumulation_steps: 8
 max_seq_length: 4096
 checkpoint_every_steps: 50
 enable_thinking: false
+backend: cuda
+mlx_num_layers: -1
 seed: 42

@@ -23,6 +23,8 @@ class TrainConfig:
     max_seq_length: int
     checkpoint_every_steps: int
     enable_thinking: bool
+    backend: str
+    mlx_num_layers: int
     seed: int
 
     def __post_init__(self) -> None:
@@ -32,6 +34,8 @@ class TrainConfig:
                 "<think> content, so thinking mode must stay disabled to keep "
                 "training and inference on-distribution"
             )
+        if self.backend not in ("cuda", "mlx"):
+            raise ValueError(f"backend must be 'cuda' or 'mlx', got {self.backend!r}")
 
 
 def load_train_config(path: str | Path) -> TrainConfig:
