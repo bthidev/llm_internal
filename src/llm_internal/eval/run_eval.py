@@ -1,5 +1,8 @@
 """Held-out eval gate. `evaluate_examples` is pure (takes pre-generated
-predictions); `generate_predictions` requires the trained model on a GPU."""
+predictions); `generate_predictions` (CUDA/transformers) and
+`generate_predictions_mlx` (MLX) each require the trained model loaded on
+real hardware. `_load_and_generate` dispatches between them based on
+EvalConfig.backend."""
 from __future__ import annotations
 
 import sys
@@ -59,16 +62,45 @@ def generate_predictions(examples: list[dict], model, tokenizer, cfg: EvalConfig
     return predictions
 
 
-def main() -> None:
-    cfg = load_eval_config("configs/eval.yaml")
-    examples = load_split(cfg.eval_file)
+def generate_predictions_mlx(examples: list[dict], model_dir: str, cfg: EvalConfig) -> list[str]:
+    """Metal-only: mirrors generate_predictions but loads/generates via
+    mlx_lm. enable_thinking=False is passed explicitly to the tokenizer's
+    chat template -- unlike mlx-lm's training dataset path, the inference
+    path does support this override."""
+    from mlx_lm import generate as mlx_generate, load as mlx_load
+
+    model, tokenizer = mlx_load(model_dir)
+    predictions = []
+    for example in examples:
+        prompt_messages = example["messages"][:-1]
+        text = tokenizer.apply_chat_template(
+            prompt_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        predictions.append(mlx_generate(model, tokenizer, prompt=text, max_tokens=cfg.max_new_tokens))
+    return predictions
+
+
+def _load_and_generate(examples: list[dict], cfg: EvalConfig) -> list[str]:
+    """Dispatches to the CUDA (transformers) or MLX prediction path based
+    on cfg.backend."""
+    if cfg.backend == "mlx":
+        return generate_predictions_mlx(examples, cfg.model_dir, cfg)
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_dir)
     model = AutoModelForCausalLM.from_pretrained(cfg.model_dir, device_map="auto")
+    return generate_predictions(examples, model, tokenizer, cfg)
 
-    predictions = generate_predictions(examples, model, tokenizer, cfg)
+
+def main() -> None:
+    cfg = load_eval_config("configs/eval.yaml")
+    examples = load_split(cfg.eval_file)
+
+    predictions = _load_and_generate(examples, cfg)
     report = evaluate_examples(examples, predictions, cfg)
 
     print(f"tool_call_accuracy={report.tool_call_accuracy:.3f} "
