@@ -15,6 +15,11 @@ class EvalConfig:
     min_plain_chat_chars: int
     tool_call_accuracy_threshold: float
     plain_chat_pass_rate_threshold: float
+    backend: str
+
+    def __post_init__(self) -> None:
+        if self.backend not in ("cuda", "mlx"):
+            raise ValueError(f"backend must be 'cuda' or 'mlx', got {self.backend!r}")
 
 
 def load_eval_config(path: str | Path) -> EvalConfig:
