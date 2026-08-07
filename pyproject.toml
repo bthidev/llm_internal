@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+mlx = ["mlx-lm>=0.31.3"]
 
 [build-system]
 requires = ["hatchling"]
