@@ -1,0 +1,10 @@
+dataset_repo: NousResearch/hermes-function-calling-v1
+dataset_revision: dae3e1d28cfbcf4b915c04ea1e072030529b4bda
+dataset_files:
+  - func-calling.json
+  - func-calling-singleturn.json
+output_dir: data/processed
+train_ratio: 0.9
+val_ratio: 0.05
+eval_ratio: 0.05
+seed: 42
