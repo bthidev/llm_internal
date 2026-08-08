@@ -20,6 +20,12 @@ dependencies = [
     "huggingface_hub>=0.23",
     "bitsandbytes>=0.43; sys_platform == 'linux'",
     "unsloth>=2024.8",
+    # Pinned: unsloth-zoo's torchao>=0.13.0 floor lets uv resolve the
+    # latest torchao (0.18.0 as of writing), which references torch
+    # APIs (torch.utils._pytree.register_constant) newer than torch
+    # 2.6.x -- crashes merely importing transformers/unsloth. Capped
+    # to the last release verified importable against torch 2.6.x.
+    "torchao>=0.13,<0.16",
     "pyyaml>=6.0",
 ]
 
