@@ -4,13 +4,15 @@ version = "0.1.0"
 description = "Homemade LLM: QLoRA tool-use fine-tune of Qwen3-1.7B"
 requires-python = ">=3.10"
 dependencies = [
-    # Pinned <2.6: unpinned torch resolves to the latest release, whose
-    # default PyPI wheel targets CUDA 13 and drops kernels for older
-    # compute-capability GPUs (e.g. Turing/T4, cc 7.5) -- fails at
-    # runtime with "no kernel image is available for execution on the
-    # device". 2.5.x's default wheel bundles CUDA 12.4, which supports
-    # Turing through Hopper and matches unsloth's tested torch250 combo.
-    "torch>=2.5.1,<2.6",
+    # Pinned to the 2.6.x line: unpinned torch resolves to the latest
+    # release, whose default PyPI wheel targets CUDA 13 and drops
+    # kernels for older compute-capability GPUs (e.g. Turing/T4, cc
+    # 7.5) -- fails at runtime with "no kernel image is available for
+    # execution on the device". torch<2.6 also breaks: unsloth's
+    # transitive torchao dependency references torch.int1, which was
+    # only added in torch 2.6.0. 2.6.x's default wheel bundles CUDA
+    # 12.4-12.6, which supports Turing through Hopper.
+    "torch>=2.6,<2.7",
     "transformers>=4.51.0",
     "trl>=0.9.6",
     "peft>=0.11.1",
