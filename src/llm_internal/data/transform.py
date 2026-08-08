@@ -2,6 +2,7 @@
 chat examples, and a stratified train/val/eval split."""
 from __future__ import annotations
 
+import json
 import random
 
 ROLE_MAP = {
@@ -31,6 +32,24 @@ def format_example(raw: dict) -> dict:
     ) else "plain_chat"
 
     return {"id": raw.get("id"), "messages": messages, "category": category}
+
+
+def dedupe_examples(examples: list[dict]) -> list[dict]:
+    """Drop examples whose `messages` content exactly duplicates an earlier
+    example's, keeping the first occurrence. Source files (e.g.
+    `func-calling.json` and `func-calling-singleturn.json`) share verbatim
+    examples under different `id`s; letting duplicates survive lets the same
+    conversation land in both `train` and `eval`, leaking eval signal.
+    """
+    seen: set[str] = set()
+    result = []
+    for ex in examples:
+        key = json.dumps(ex["messages"], sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(ex)
+    return result
 
 
 def stratified_split(
