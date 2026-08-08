@@ -63,5 +63,11 @@ def test_load_data_config_reads_real_config_file():
     assert isinstance(cfg, DataConfig)
     assert cfg.dataset_repo == "NousResearch/hermes-function-calling-v1"
     assert cfg.dataset_revision == "dae3e1d28cfbcf4b915c04ea1e072030529b4bda"
-    assert cfg.dataset_files == ["func-calling.json", "func-calling-singleturn.json"]
+    assert cfg.dataset_files == [
+        "func-calling.json",
+        "func-calling-singleturn.json",
+        "glaive-function-calling-5k.json",
+        "json-mode-agentic.json",
+        "json-mode-singleturn.json",
+    ]
     assert abs(cfg.train_ratio + cfg.val_ratio + cfg.eval_ratio - 1.0) < 1e-9

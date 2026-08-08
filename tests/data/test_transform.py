@@ -1,7 +1,7 @@
 # tests/data/test_transform.py
 import pytest
 
-from llm_internal.data.transform import format_example, stratified_split
+from llm_internal.data.transform import dedupe_examples, format_example, stratified_split
 
 
 def _raw(conversations, ex_id="abc"):
@@ -85,3 +85,26 @@ def test_stratified_split_is_deterministic_for_a_fixed_seed():
 def test_stratified_split_rejects_ratios_that_dont_sum_to_one():
     with pytest.raises(ValueError):
         stratified_split([], train_ratio=0.8, val_ratio=0.1, eval_ratio=0.2, seed=1)
+
+
+def test_dedupe_examples_drops_duplicate_message_content_keeping_first():
+    examples = [
+        {"id": "a1", "messages": [{"role": "user", "content": "hi"}], "category": "plain_chat"},
+        {"id": "a2", "messages": [{"role": "user", "content": "hi"}], "category": "plain_chat"},
+        {"id": "a3", "messages": [{"role": "user", "content": "bye"}], "category": "plain_chat"},
+    ]
+
+    result = dedupe_examples(examples)
+
+    assert [e["id"] for e in result] == ["a1", "a3"]
+
+
+def test_dedupe_examples_keeps_examples_with_same_id_but_different_content():
+    examples = [
+        {"id": "x", "messages": [{"role": "user", "content": "one"}], "category": "plain_chat"},
+        {"id": "x", "messages": [{"role": "user", "content": "two"}], "category": "plain_chat"},
+    ]
+
+    result = dedupe_examples(examples)
+
+    assert len(result) == 2

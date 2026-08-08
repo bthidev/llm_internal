@@ -10,24 +10,25 @@ from llm_internal.train.sft import load_split
 
 
 def _fixture_raw_examples():
-    return [
-        {
-            "id": "tc-1",
+    examples = []
+    for i in range(10):
+        examples.append({
+            "id": f"tc-{i}",
             "conversations": [
                 {"from": "system", "value": "You are a function calling AI model.\n<tools>[]</tools>"},
-                {"from": "human", "value": "What's the weather in Paris?"},
-                {"from": "gpt", "value": '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Paris"}}\n</tool_call>'},
+                {"from": "human", "value": f"What's the weather in city {i}?"},
+                {"from": "gpt", "value": f'<tool_call>\n{{"name": "get_weather", "arguments": {{"city": "city-{i}"}}}}\n</tool_call>'},
             ],
-        },
-        {
-            "id": "pc-1",
+        })
+        examples.append({
+            "id": f"pc-{i}",
             "conversations": [
                 {"from": "system", "value": "You are a helpful assistant."},
-                {"from": "human", "value": "Hi there"},
-                {"from": "gpt", "value": "Hello! How can I help you today?"},
+                {"from": "human", "value": f"Hi there, question {i}"},
+                {"from": "gpt", "value": f"Hello! How can I help you today ({i})?"},
             ],
-        },
-    ] * 10  # 20 raw examples, enough for a non-degenerate 80/10/10 split
+        })
+    return examples  # 20 distinct raw examples, enough for a non-degenerate 80/10/10 split
 
 
 def test_full_offline_pipeline_slice_runs_end_to_end(tmp_path: Path):

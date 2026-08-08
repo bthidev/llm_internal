@@ -8,7 +8,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 from llm_internal.data.config import DataConfig, load_data_config
-from llm_internal.data.transform import format_example, stratified_split
+from llm_internal.data.transform import dedupe_examples, format_example, stratified_split
 
 
 def write_jsonl(examples: list[dict], path: Path) -> None:
@@ -27,10 +27,13 @@ def prepare_dataset(
     seed: int = 42,
 ) -> dict[str, int]:
     """`raw_examples` are already-formatted examples (output of `format_example`,
-    each with a `"category"` key). Splits them and writes train/val/eval.jsonl
-    into `output_dir`. Returns the example count per split.
+    each with a `"category"` key). Drops exact-content duplicates (keeping the
+    first occurrence) before splitting, so the same conversation can't leak
+    across `train`/`val`/`eval`. Writes train/val/eval.jsonl into `output_dir`.
+    Returns the example count per split.
     """
-    train, val, ev = stratified_split(raw_examples, train_ratio, val_ratio, eval_ratio, seed)
+    deduped = dedupe_examples(raw_examples)
+    train, val, ev = stratified_split(deduped, train_ratio, val_ratio, eval_ratio, seed)
     output_dir = Path(output_dir)
     write_jsonl(train, output_dir / "train.jsonl")
     write_jsonl(val, output_dir / "val.jsonl")
@@ -59,6 +62,7 @@ def main() -> None:
     cfg: DataConfig = load_data_config("configs/data.yaml")
     raw = download_raw_examples(cfg.dataset_repo, cfg.dataset_revision, cfg.dataset_files)
     formatted = [format_example(r) for r in raw]
+    before = len(formatted)
     counts = prepare_dataset(
         formatted,
         output_dir=Path(cfg.output_dir),
@@ -67,6 +71,8 @@ def main() -> None:
         eval_ratio=cfg.eval_ratio,
         seed=cfg.seed,
     )
+    after = counts["train"] + counts["val"] + counts["eval"]
+    print(f"dropped {before - after} exact-duplicate examples")
     print(f"wrote splits: {counts}")
 
 
