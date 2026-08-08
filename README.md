@@ -24,7 +24,7 @@ Plan: `docs/superpowers/plans/2026-08-07-homemade-llm.md`,
 | Training | Unsloth `FastLanguageModel` + TRL `SFTTrainer` | `mlx_lm.lora` (QLoRA on a locally quantized base) |
 | Eval generation | `transformers` | `mlx_lm.generate` |
 | Export output | GGUF (`q4_k_m`) + Ollama `Modelfile` | Fused + quantized MLX weights dir + `README.md` |
-| Run script | `./scripts/run_on_runpod.sh` | `./scripts/run_on_mac_mlx.sh` |
+| Run script | `./scripts/run_on_runpod.sh` (rented GPU) or `./scripts/run_on_kaggle.sh` (free Kaggle T4) | `./scripts/run_on_mac_mlx.sh` |
 | Install | `uv sync --extra dev` | `uv sync --extra dev --extra mlx` |
 
 Switching backends is a config edit (`backend: cuda` / `backend: mlx` in
@@ -51,6 +51,51 @@ uv run pytest
 - `configs/train.yaml` — base model, LoRA hyperparameters, training schedule, `backend`
 - `configs/eval.yaml` — eval gate thresholds, `backend`
 - `configs/export.yaml` — export model/output dirs, quant level, `backend`
+
+## Running on Kaggle (free GPU)
+
+`backend: cuda` also runs on Kaggle's free T4 quota (~30 GPU-hours/week,
+~9-12h/session cap) via `./scripts/run_on_kaggle.sh` — no account billing,
+no config changes vs. `run_on_runpod.sh`. Training auto-resumes from the
+latest checkpoint, so a run that outlives one session continues in the
+next: `Save Version` (with "Always save output") to persist `checkpoints/`
+as notebook output, turn that output into a Kaggle Dataset, attach it as
+input to the next session, and pass its path as `RESUME_FROM`. See the
+script header for the exact cell commands.
+
+For a fully local, notebook-free workflow, `./scripts/run_on_kaggle_api.sh`
+drives the same Kaggle run through the `kaggle` API/CLI: it pushes a
+script kernel (`scripts/kaggle_api/`), polls until the run finishes,
+downloads output to `./kaggle_output/`, and — if training didn't finish —
+publishes `kaggle_output/llm_internal/checkpoints/` as a Kaggle Dataset and
+wires it in as the next run's resume source automatically. Re-run it
+(e.g. weekly, as the GPU quota resets) until `export/*.gguf` appears.
+
+One-time setup:
+
+1. `pip install kaggle` (kaggle CLI 2.x; also needs `jq`, used to patch
+   the kernel/dataset metadata).
+2. Kaggle account → Settings → API → "Create New Token" → save the token
+   string to `~/.kaggle/access_token` (`chmod 600`). kaggle CLI 2.x no
+   longer reads the old `~/.kaggle/kaggle.json` username+key format;
+   `export KAGGLE_API_TOKEN=<token>` also works.
+3. In `scripts/kaggle_api/kernel-metadata.json`, set `"id"` to
+   `<your-kaggle-username>/homemade-llm-training`.
+4. In `scripts/kaggle_api/run_kernel.py`, set `REPO_URL` to this repo's git
+   remote — it must be `git clone`-able from Kaggle with internet enabled
+   (a public URL, or an `https://` URL with an embedded token for a
+   private repo).
+
+Then run:
+
+```bash
+KAGGLE_USERNAME=<your-kaggle-username> ./scripts/run_on_kaggle_api.sh
+```
+
+Each invocation pushes the kernel, blocks until it completes (or fails),
+and syncs `./kaggle_output/`. If `kaggle_output/llm_internal/export/*.gguf`
+isn't there yet, just re-run the same command later — it resumes from
+`kaggle_output/llm_internal/checkpoints/` automatically.
 
 ## After training (CUDA backend)
 
