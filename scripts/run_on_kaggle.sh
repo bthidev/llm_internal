@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Run the full fine-tuning pipeline (CUDA backend) in a Kaggle Notebook,
+# using Kaggle's free T4 GPU quota.
+#
+# Notebook prerequisites:
+#   - Settings > Accelerator: GPU T4 x2
+#   - Settings > Internet: on (needed to pull the base model, dataset, uv)
+#   - This repo cloned into the notebook, e.g. in the first cell:
+#       !git clone <repo-url> /kaggle/working/llm_internal
+#
+# Kaggle's free quota is ~30 GPU-hours/week with a hard ~9-12h session cap,
+# so a full run often spans multiple sessions/weeks. This script and the
+# training entrypoint both resume automatically:
+#   - Training (src/llm_internal/train/sft.py) resumes from the latest
+#     checkpoint-* subdir under checkpoints/ if one exists, and simply
+#     continues toward the full epoch count -- if a session times out
+#     mid-training, the next session's run just picks up where it left off.
+#   - Kaggle sessions are ephemeral: without an explicit "Save Version"
+#     (Save & Run All, with "Always save output" on), everything under
+#     /kaggle/working is lost when the session ends. To carry checkpoints/
+#     into the next session: Save Version -> create/update a Kaggle Dataset
+#     from that version's Output -> attach the dataset as input to the next
+#     notebook session -> pass its checkpoints/ path as RESUME_FROM below.
+#
+# Usage (from a notebook cell):
+#   %cd /kaggle/working/llm_internal
+#   !RESUME_FROM=/kaggle/input/homemade-llm-checkpoints/checkpoints \
+#       bash scripts/run_on_kaggle.sh
+# (omit RESUME_FROM for the first session)
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "[0/5] Seeding checkpoints from a prior session (if RESUME_FROM is set)..."
+if [ -n "${RESUME_FROM:-}" ] && [ -d "$RESUME_FROM" ]; then
+    mkdir -p checkpoints
+    cp -r "$RESUME_FROM"/. checkpoints/
+    echo "Resumed from $RESUME_FROM"
+else
+    echo "No RESUME_FROM set (or path missing) -- starting fresh."
+fi
+
+echo "[1/5] Installing dependencies..."
+pip install -q uv
+uv sync --extra dev
+
+echo "[2/5] Preparing dataset (downloads NousResearch/hermes-function-calling-v1)..."
+uv run python -m llm_internal.data.prepare
+
+echo "[3/5] Running QLoRA SFT training (resumes automatically if checkpoints exist)..."
+uv run python -m llm_internal.train.sft
+
+echo "[4/5] Running held-out eval gate..."
+if ! uv run python -m llm_internal.eval.run_eval; then
+    echo "Eval gate failed -- checkpoint not exported. Inspect metrics above, adjust configs/train.yaml, and re-run training." >&2
+    exit 1
+fi
+
+echo "[5/5] Exporting merged model to GGUF + Ollama Modelfile..."
+uv run python -m llm_internal.export.to_gguf
+
+echo "Done. checkpoints/ and export/ are under /kaggle/working/llm_internal."
+echo "Now: Kaggle menu -> Save Version -> Save & Run All (Commit), with"
+echo "'Always save output' checked, so checkpoints/ and export/ persist as"
+echo "notebook output. Download export/*.gguf and export/Modelfile from the"
+echo "Output tab, then locally:"
+echo "  ollama create homemade-llm -f Modelfile"
+echo "  ollama run homemade-llm"
