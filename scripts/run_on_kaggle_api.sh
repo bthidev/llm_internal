@@ -72,7 +72,7 @@ else
 fi
 
 echo "[2/4] Pushing and starting the kernel run..."
-kaggle kernels push -p "$KDIR"
+kaggle kernels push -p "$KDIR" --accelerator NvidiaTeslaT4
 
 echo "[3/4] Polling kernel status (a full session can take hours)..."
 while true; do
@@ -82,8 +82,11 @@ while true; do
     case "$status" in
         COMPLETE) break ;;
         FAILED|CANCELLED|ERROR)
-            echo "Kernel run did not complete. Inspect logs:" >&2
-            echo "  kaggle kernels output $KERNEL_ID -p $OUT_DIR" >&2
+            echo "Kernel run did not complete. Downloading output for inspection..." >&2
+            rm -rf "$OUT_DIR"
+            kaggle kernels output "$KERNEL_ID" -p "$OUT_DIR" || true
+            echo "See $OUT_DIR/ (script.log has the traceback) and:" >&2
+            echo "  kaggle kernels logs $KERNEL_ID" >&2
             exit 1
             ;;
     esac
