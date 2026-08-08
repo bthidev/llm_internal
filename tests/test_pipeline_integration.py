@@ -47,7 +47,7 @@ def test_full_offline_pipeline_slice_runs_end_to_end(tmp_path: Path):
     cfg = EvalConfig(
         model_dir="unused", eval_file="unused", max_new_tokens=64,
         min_plain_chat_chars=3, tool_call_accuracy_threshold=0.8,
-        plain_chat_pass_rate_threshold=0.8,
+        plain_chat_pass_rate_threshold=0.8, backend="cuda",
     )
     predictions = []
     for ex in eval_examples:

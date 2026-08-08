@@ -1,6 +1,8 @@
 """QLoRA SFT training stage. Chat rendering/dataset assembly are pure and
-tested locally; `run_training` requires a CUDA GPU and is exercised on a
-rented GPU (see scripts/run_on_runpod.sh)."""
+tested locally; run_training dispatches to the CUDA (Unsloth) or MLX
+backend based on TrainConfig.backend. Both backend implementations are
+GPU/Metal-only and exercised on real hardware, not in this test suite (see
+scripts/run_on_runpod.sh and scripts/run_on_mac_mlx.sh)."""
 from __future__ import annotations
 
 import json
@@ -37,9 +39,20 @@ def build_hf_dataset(examples: list[dict], tokenizer) -> Dataset:
 
 
 def run_training(cfg: TrainConfig) -> None:
+    """Dispatches to the CUDA/Unsloth or MLX training backend based on
+    cfg.backend."""
+    if cfg.backend == "mlx":
+        from llm_internal.train.mlx_backend import run_mlx_training
+
+        run_mlx_training(cfg)
+    else:
+        _run_training_unsloth(cfg)
+
+
+def _run_training_unsloth(cfg: TrainConfig) -> None:
     """GPU-only: loads Qwen3-1.7B in 4-bit via Unsloth, attaches a LoRA
     adapter, and runs TRL's SFTTrainer. Resumes automatically from the
-    latest checkpoint in `cfg.output_dir` if one exists.
+    latest checkpoint in cfg.output_dir if one exists.
     """
     from unsloth import FastLanguageModel
     from trl import SFTConfig, SFTTrainer

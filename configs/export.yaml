@@ -1,0 +1,4 @@
+backend: cuda
+model_dir: checkpoints
+output_dir: export
+quant: q4_k_m

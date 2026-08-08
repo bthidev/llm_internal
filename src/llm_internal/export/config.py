@@ -1,4 +1,5 @@
-"""Config for the held-out eval gate."""
+"""Config for the export stage: GGUF/Ollama for the cuda backend, a fused
++ quantized MLX weights directory for the mlx backend."""
 from __future__ import annotations
 
 import dataclasses
@@ -8,19 +9,16 @@ from llm_internal.config_utils import load_yaml_dataclass
 
 
 @dataclasses.dataclass
-class EvalConfig:
-    model_dir: str
-    eval_file: str
-    max_new_tokens: int
-    min_plain_chat_chars: int
-    tool_call_accuracy_threshold: float
-    plain_chat_pass_rate_threshold: float
+class ExportConfig:
     backend: str
+    model_dir: str
+    output_dir: str
+    quant: str
 
     def __post_init__(self) -> None:
         if self.backend not in ("cuda", "mlx"):
             raise ValueError(f"backend must be 'cuda' or 'mlx', got {self.backend!r}")
 
 
-def load_eval_config(path: str | Path) -> EvalConfig:
-    return load_yaml_dataclass(path, EvalConfig)
+def load_export_config(path: str | Path) -> ExportConfig:
+    return load_yaml_dataclass(path, ExportConfig)
