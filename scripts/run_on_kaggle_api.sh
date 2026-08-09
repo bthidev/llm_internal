@@ -35,6 +35,12 @@ cd "$(dirname "$0")/.."
 KDIR="scripts/kaggle_api"
 OUT_DIR="kaggle_output"
 CHECKPOINT_DATASET_ID="$KAGGLE_USERNAME/homemade-llm-checkpoints"
+# Kernel output includes the full /kaggle/working tree, i.e. the ~5GB+
+# uv venv (torch/CUDA libs) alongside the files we actually want.
+# kaggle kernels output has no server-side exclude, only an include
+# pattern -- so always scope downloads to these paths, or risk
+# hammering ListKernelSessionOutput into a rate-limit cooldown.
+OUT_FILE_PATTERN='.*llm_internal/checkpoints/.*|.*llm_internal/export/.*|.*__results__\.html'
 
 command -v kaggle >/dev/null || { echo "kaggle CLI not found -- pip install kaggle" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq not found -- required to patch kernel-metadata.json" >&2; exit 1; }
@@ -84,7 +90,7 @@ while true; do
         FAILED|CANCELLED|ERROR)
             echo "Kernel run did not complete. Downloading output for inspection..." >&2
             rm -rf "$OUT_DIR"
-            kaggle kernels output "$KERNEL_ID" -p "$OUT_DIR" || true
+            kaggle kernels output "$KERNEL_ID" -p "$OUT_DIR" --file-pattern "$OUT_FILE_PATTERN" || true
             echo "See $OUT_DIR/ (script.log has the traceback) and:" >&2
             echo "  kaggle kernels logs $KERNEL_ID" >&2
             exit 1
@@ -95,7 +101,7 @@ done
 
 echo "[4/4] Downloading kernel output to $OUT_DIR/ ..."
 rm -rf "$OUT_DIR"
-kaggle kernels output "$KERNEL_ID" -p "$OUT_DIR"
+kaggle kernels output "$KERNEL_ID" -p "$OUT_DIR" --file-pattern "$OUT_FILE_PATTERN"
 
 if compgen -G "$OUT_DIR/llm_internal/export/*.gguf" >/dev/null 2>&1; then
     echo "Done: export artifacts are in $OUT_DIR/llm_internal/export/"
