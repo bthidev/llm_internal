@@ -1,0 +1,16 @@
+# Config for the independent tool-calling benchmark (data/benchmark/*.jsonl),
+# run via `python -m llm_internal.eval.run_benchmark`. Distinct from
+# configs/eval.yaml, which scores the deterministic Hermes held-out split.
+model_dir: checkpoints
+model_revision: null
+benchmark_files:
+  - data/benchmark/cases.jsonl
+max_new_tokens: 512
+min_plain_chat_chars: 5
+backend: cuda
+seed: 42
+# Per-metric threshold overrides layered onto eval/gates.py's DEFAULT_GATES
+# (metric name -> new threshold; direction/mandatory-ness stay fixed).
+# Empty by default -- see README "Quality gates" for the documented
+# rationale behind each default.
+gate_overrides: {}

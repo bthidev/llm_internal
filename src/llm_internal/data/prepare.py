@@ -53,7 +53,7 @@ def download_raw_examples(dataset_repo: str, dataset_revision: str, dataset_file
             filename=filename,
             revision=dataset_revision,
         )
-        with open(local_path, "r", encoding="utf-8") as f:
+        with open(local_path, encoding="utf-8") as f:
             merged.extend(json.load(f))
     return merged
 

@@ -164,7 +164,8 @@ def run_mlx_training(cfg: TrainConfig) -> None:
     by mlx_lm.lora itself."""
     import types
 
-    from mlx_lm import convert, load as mlx_load
+    from mlx_lm import convert
+    from mlx_lm import load as mlx_load
     from mlx_lm.lora import run as mlx_lora_run
 
     from llm_internal.train.sft import load_split
@@ -174,7 +175,7 @@ def run_mlx_training(cfg: TrainConfig) -> None:
     data_dir = output_dir / "mlx_data"
 
     if not base_dir.exists():
-        convert(cfg.base_model, mlx_path=str(base_dir), quantize=True, q_bits=4)
+        convert(cfg.base_model, mlx_path=str(base_dir), quantize=True, q_bits=4, revision=cfg.base_model_revision)
 
     _, tokenizer = mlx_load(str(base_dir))
     export_data_for_mlx(cfg.data_dir, tokenizer, data_dir)

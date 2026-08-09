@@ -25,7 +25,7 @@ def build_training_text(messages: list[dict], tokenizer) -> str:
 
 def load_split(path: str | Path) -> list[dict]:
     examples = []
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -54,13 +54,14 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
     adapter, and runs TRL's SFTTrainer. Resumes automatically from the
     latest checkpoint in cfg.output_dir if one exists.
     """
-    from unsloth import FastLanguageModel
     from trl import SFTConfig, SFTTrainer
+    from unsloth import FastLanguageModel
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg.base_model,
         max_seq_length=cfg.max_seq_length,
         load_in_4bit=True,
+        revision=cfg.base_model_revision,
     )
     model = FastLanguageModel.get_peft_model(
         model,

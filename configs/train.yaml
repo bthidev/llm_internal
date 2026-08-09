@@ -1,4 +1,12 @@
+# Pinned to an immutable Hugging Face commit sha rather than a mutable ref
+# (branch/tag) so `uv run` reproduces the exact same base weights every
+# time. To pick up a newer Qwen3-1.7B release: check
+# https://huggingface.co/Qwen/Qwen3-1.7B/commits/main for the new commit
+# sha, update `base_model_revision` here, and re-verify eval/gates.py's
+# benchmark_eval_base.yaml counterpart is updated to match (see README
+# "Reproducibility").
 base_model: Qwen/Qwen3-1.7B
+base_model_revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
 data_dir: data/processed
 output_dir: checkpoints
 lora_r: 16
