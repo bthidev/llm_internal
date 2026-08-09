@@ -23,9 +23,17 @@ dependencies = [
     # Pinned: unsloth-zoo's torchao>=0.13.0 floor lets uv resolve the
     # latest torchao (0.18.0 as of writing), which references torch
     # APIs (torch.utils._pytree.register_constant) newer than torch
-    # 2.6.x -- crashes merely importing transformers/unsloth. Capped
-    # to the last release verified importable against torch 2.6.x.
-    "torchao>=0.13,<0.16",
+    # 2.6.x -- crashes merely importing transformers/unsloth. But
+    # peft's LoRA adapter loader (peft.import_utils.is_torchao_available)
+    # hard-requires torchao>=0.16.0, raising ImportError instead of
+    # treating it as unavailable if a lower version is installed --
+    # confirmed at eval time on a live Kaggle run, after a full
+    # training run succeeded. Exact-pinned to 0.16.0: it's the only
+    # release verified compatible with torch 2.6.x end to end --
+    # 0.17.0 additionally breaks (ModuleNotFoundError:
+    # BloomPreTrainedModel, via a transformers lazy-import chain) and
+    # 0.18.0+ breaks via torch.utils._pytree.register_constant.
+    "torchao==0.16.0",
     "pyyaml>=6.0",
 ]
 
