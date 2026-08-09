@@ -100,6 +100,12 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
         seed=cfg.seed,
         bf16=bf16,
         fp16=not bf16,
+        # Unsloth patches SFTConfig's eos_token default to a literal
+        # '<EOS_TOKEN>' placeholder sentinel that isn't in any real
+        # vocabulary; trl's SFTTrainer then rejects it outright. Use
+        # the tokenizer's actual eos_token, which is what an unset
+        # (None) eos_token is documented to fall back to anyway.
+        eos_token=tokenizer.eos_token,
     )
     trainer = SFTTrainer(
         model=model,
