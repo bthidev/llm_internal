@@ -1,0 +1,16 @@
+# Points the independent benchmark at the *original, unmodified* base
+# model instead of a fine-tuned checkpoint, for use with
+# `python -m llm_internal.eval.compare_models configs/benchmark_eval_base.yaml configs/benchmark_eval.yaml`.
+# model_dir is a Hugging Face repo id (not a local checkpoint dir); model_revision
+# pins the exact immutable revision -- keep this in sync with
+# configs/train.yaml's base_model/base_model_revision so the comparison is
+# against the same base weights the fine-tune started from.
+model_dir: Qwen/Qwen3-1.7B
+model_revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+benchmark_files:
+  - data/benchmark/cases.jsonl
+max_new_tokens: 512
+min_plain_chat_chars: 5
+backend: cuda
+seed: 42
+gate_overrides: {}

@@ -22,6 +22,20 @@ def parse_tool_calls(text: str) -> list[dict]:
     return calls
 
 
+def parse_tool_calls_detailed(text: str) -> tuple[list[dict], int]:
+    """Like `parse_tool_calls`, but also reports how many <tool_call> blocks
+    failed to parse as JSON (a structural-validity signal `parse_tool_calls`
+    alone discards)."""
+    calls = []
+    malformed = 0
+    for raw in _TOOL_CALL_RE.findall(text):
+        try:
+            calls.append(json.loads(raw))
+        except json.JSONDecodeError:
+            malformed += 1
+    return calls, malformed
+
+
 def _last_expected_tool_call(expected_messages: list[dict]) -> dict | None:
     for message in reversed(expected_messages):
         if message["role"] == "assistant" and "<tool_call>" in message["content"]:

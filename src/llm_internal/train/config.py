@@ -10,6 +10,7 @@ from llm_internal.config_utils import load_yaml_dataclass
 @dataclasses.dataclass
 class TrainConfig:
     base_model: str
+    base_model_revision: str
     data_dir: str
     output_dir: str
     lora_r: int

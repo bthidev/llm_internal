@@ -64,6 +64,7 @@ def test_build_hf_dataset_adds_text_column(tokenizer):
 def _full_train_config(**overrides) -> TrainConfig:
     values = dict(
         base_model="Qwen/Qwen3-1.7B",
+        base_model_revision="70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
         data_dir="data/processed",
         output_dir="checkpoints",
         lora_r=16,

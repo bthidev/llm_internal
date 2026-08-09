@@ -1,0 +1,41 @@
+name: CI
+
+# Lint, type-check, and run the unit test suite on every push/PR. This
+# deliberately does NOT run model training or GPU/Metal-backed evaluation
+# (eval/run_eval.py's generate_predictions*, eval/run_benchmark.py's
+# generate_benchmark_predictions, eval/compare_models.py's main) -- those
+# require a real GPU/Apple Silicon host and a trained checkpoint; run them
+# via scripts/run_on_runpod.sh, scripts/run_on_kaggle*.sh, or
+# scripts/run_on_mac_mlx.sh on suitable hardware instead. Everything this
+# workflow exercises is pure Python with no model/GPU dependency.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked --extra dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pyright type check
+        run: uv run pyright
+
+      - name: Run tests with coverage
+        run: uv run pytest

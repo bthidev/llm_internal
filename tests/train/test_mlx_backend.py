@@ -19,6 +19,7 @@ from llm_internal.train.mlx_backend import (
 def _cfg(**overrides) -> TrainConfig:
     values = dict(
         base_model="Qwen/Qwen3-1.7B",
+        base_model_revision="70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
         data_dir="data/processed",
         output_dir="checkpoints",
         lora_r=16,

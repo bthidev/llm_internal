@@ -9,3 +9,4 @@ kaggle_run.log
 kaggle_output/
 .uvcache/
 .env
+.coverage

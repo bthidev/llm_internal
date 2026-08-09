@@ -22,6 +22,7 @@ def test_load_train_config_rejects_enable_thinking_true(tmp_path: Path):
     bad = tmp_path / "train.yaml"
     bad.write_text(
         "base_model: Qwen/Qwen3-1.7B\n"
+        "base_model_revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e\n"
         "data_dir: data/processed\n"
         "output_dir: checkpoints\n"
         "lora_r: 16\n"
@@ -48,6 +49,7 @@ def test_load_train_config_rejects_invalid_backend(tmp_path: Path):
     bad = tmp_path / "train.yaml"
     bad.write_text(
         "base_model: Qwen/Qwen3-1.7B\n"
+        "base_model_revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e\n"
         "data_dir: data/processed\n"
         "output_dir: checkpoints\n"
         "lora_r: 16\n"
