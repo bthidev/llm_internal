@@ -89,7 +89,7 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
         save_steps=cfg.checkpoint_every_steps,
         eval_strategy="steps",
         eval_steps=cfg.checkpoint_every_steps,
-        max_seq_length=cfg.max_seq_length,
+        max_length=cfg.max_seq_length,
         dataset_text_field="text",
         seed=cfg.seed,
     )
