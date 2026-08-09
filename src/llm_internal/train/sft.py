@@ -54,6 +54,7 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
     adapter, and runs TRL's SFTTrainer. Resumes automatically from the
     latest checkpoint in cfg.output_dir if one exists.
     """
+    import torch
     from trl import SFTConfig, SFTTrainer
     from unsloth import FastLanguageModel
 
@@ -80,6 +81,11 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
     output_dir = Path(cfg.output_dir)
     resume = output_dir.exists() and any(output_dir.glob("checkpoint-*"))
 
+    # transformers' TrainingArguments now rejects the (previously
+    # implicit) bf16 default on GPUs that lack real bf16 tensor cores
+    # (Ampere+ only) -- Turing/T4 doesn't qualify, so pick explicitly
+    # rather than let a version-dependent default choose for us.
+    bf16 = torch.cuda.is_bf16_supported(including_emulation=False)
     sft_config = SFTConfig(
         output_dir=str(output_dir),
         per_device_train_batch_size=cfg.per_device_train_batch_size,
@@ -92,6 +98,8 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
         max_length=cfg.max_seq_length,
         dataset_text_field="text",
         seed=cfg.seed,
+        bf16=bf16,
+        fp16=not bf16,
     )
     trainer = SFTTrainer(
         model=model,
