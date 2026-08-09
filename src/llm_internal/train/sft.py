@@ -55,8 +55,14 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
     latest checkpoint in cfg.output_dir if one exists.
     """
     import torch
-    from trl import SFTConfig, SFTTrainer
+
+    # Unsloth must be imported before trl: its patches rewrite trl's
+    # internals at import time, and importing trl first leaves those
+    # patches half-applied -- observed effect is Unsloth mutating
+    # tokenizer.eos_token to a literal '<EOS_TOKEN>' placeholder
+    # sentinel (see https://github.com/unslothai/unsloth/issues/2797).
     from unsloth import FastLanguageModel
+    from trl import SFTConfig, SFTTrainer
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg.base_model,
@@ -100,11 +106,9 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
         seed=cfg.seed,
         bf16=bf16,
         fp16=not bf16,
-        # Unsloth patches SFTConfig's eos_token default to a literal
-        # '<EOS_TOKEN>' placeholder sentinel that isn't in any real
-        # vocabulary; trl's SFTTrainer then rejects it outright. Use
-        # the tokenizer's actual eos_token, which is what an unset
-        # (None) eos_token is documented to fall back to anyway.
+        # Explicit even though it's what an unset (None) eos_token
+        # falls back to anyway -- defensive against the import-order
+        # sensitivity noted above.
         eos_token=tokenizer.eos_token,
     )
     trainer = SFTTrainer(
