@@ -13,6 +13,7 @@ from llm_internal.eval.generation import generate_cuda, generate_mlx, load_cuda_
 from llm_internal.eval.scoring import (
     Report,
     aggregate_results,
+    prompt_messages_for_example,
     score_plain_chat_example,
     score_tool_call_example,
     summarize_tool_call_failures,
@@ -50,10 +51,10 @@ def evaluate_examples(examples: list[dict], predictions: list[str], cfg: EvalCon
 
 
 def generate_predictions(examples: list[dict], model, tokenizer, cfg: EvalConfig) -> list[str]:
-    """GPU-only: for each example, render every message except the final
-    assistant turn through the chat template with a generation prompt, then
-    greedily generate the model's reply."""
-    prompts = [render_prompt(example["messages"][:-1], tokenizer) for example in examples]
+    """GPU-only: for each example, render its prompt_messages_for_example
+    (see scoring.py) through the chat template with a generation prompt,
+    then greedily generate the model's reply."""
+    prompts = [render_prompt(prompt_messages_for_example(example), tokenizer) for example in examples]
     return generate_cuda(prompts, model, tokenizer, cfg.max_new_tokens)
 
 
@@ -61,7 +62,7 @@ def generate_predictions_mlx(examples: list[dict], model_dir: str, cfg: EvalConf
     """Metal-only: mirrors generate_predictions but loads/generates via
     mlx_lm."""
     model, tokenizer = load_mlx_model(model_dir)
-    prompts = [render_prompt(example["messages"][:-1], tokenizer) for example in examples]
+    prompts = [render_prompt(prompt_messages_for_example(example), tokenizer) for example in examples]
     return generate_mlx(prompts, model, tokenizer, cfg.max_new_tokens)
 
 

@@ -3,6 +3,7 @@ from llm_internal.eval.scoring import (
     Report,
     aggregate_results,
     parse_tool_calls,
+    prompt_messages_for_example,
     score_plain_chat_example,
     score_tool_call_example,
     summarize_tool_call_failures,
@@ -178,3 +179,51 @@ def test_summarize_tool_call_failures_truncates_samples():
 
     assert summary.count("expected=") == 2
     assert "no_tool_call_block=10" in summary
+
+
+def test_prompt_messages_for_example_drops_only_last_turn_for_plain_chat():
+    example = _example(
+        [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello there"},
+        ],
+        category="plain_chat",
+    )
+
+    assert prompt_messages_for_example(example) == [{"role": "user", "content": "hi"}]
+
+
+def test_prompt_messages_for_example_truncates_before_tool_call_when_last_turn():
+    tool_call_msg = {
+        "role": "assistant",
+        "content": '<tool_call>\n{"name": "a", "arguments": {}}\n</tool_call>',
+    }
+    example = _example([{"role": "user", "content": "?"}, tool_call_msg])
+
+    assert prompt_messages_for_example(example) == [{"role": "user", "content": "?"}]
+
+
+def test_prompt_messages_for_example_truncates_before_tool_call_when_conversation_continues():
+    # Regression: raw hermes-function-calling-v1 conversations often continue
+    # past the tool call (tool response, then a final NL summary). Dropping
+    # only the last message would prompt the model to continue *after* the
+    # tool call -- producing exactly the plain-text summary it's supposed
+    # to, while scoring still compares that against the tool call itself,
+    # guaranteeing a mismatch. The prompt must stop right before the same
+    # turn _last_expected_tool_call / score_tool_call_example score against.
+    user_msg = {"role": "user", "content": "book it"}
+    tool_call_msg = {
+        "role": "assistant",
+        "content": '<tool_call>\n{"name": "book", "arguments": {"id": 1}}\n</tool_call>',
+    }
+    tool_response_msg = {"role": "tool", "content": '<tool_response>\n{"ok": true}\n</tool_response>'}
+    summary_msg = {"role": "assistant", "content": "Done, it's booked."}
+    example = _example([user_msg, tool_call_msg, tool_response_msg, summary_msg])
+
+    assert prompt_messages_for_example(example) == [user_msg]
+
+
+def test_prompt_messages_for_example_falls_back_when_no_tool_call_present():
+    example = _example([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}])
+
+    assert prompt_messages_for_example(example) == [{"role": "user", "content": "hi"}]
