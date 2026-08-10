@@ -56,6 +56,7 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
     """
     import torch
 
+    # isort: off
     # Unsloth must be imported before trl: its patches rewrite trl's
     # internals at import time, and importing trl first leaves those
     # patches half-applied -- observed effect is Unsloth mutating
@@ -63,6 +64,7 @@ def _run_training_unsloth(cfg: TrainConfig) -> None:
     # sentinel (see https://github.com/unslothai/unsloth/issues/2797).
     from unsloth import FastLanguageModel
     from trl import SFTConfig, SFTTrainer
+    # isort: on
 
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=cfg.base_model,
