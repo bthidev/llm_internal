@@ -84,12 +84,43 @@ def summarize_tool_call_failures(
     return "\n".join(lines)
 
 
-def _last_expected_tool_call(expected_messages: list[dict]) -> dict | None:
-    for message in reversed(expected_messages):
+def _last_tool_call_turn_index(messages: list[dict]) -> int | None:
+    for i in range(len(messages) - 1, -1, -1):
+        message = messages[i]
         if message["role"] == "assistant" and "<tool_call>" in message["content"]:
-            calls = parse_tool_calls(message["content"])
-            return calls[0] if calls else None
+            return i
     return None
+
+
+def _last_expected_tool_call(expected_messages: list[dict]) -> dict | None:
+    idx = _last_tool_call_turn_index(expected_messages)
+    if idx is None:
+        return None
+    calls = parse_tool_calls(expected_messages[idx]["content"])
+    return calls[0] if calls else None
+
+
+def prompt_messages_for_example(example: dict) -> list[dict]:
+    """Messages to render (with a generation prompt appended) so the model's
+    continuation is comparable to what's actually scored.
+
+    For `plain_chat`, that's everything but the final assistant turn, as
+    before. For `tool_call`, the raw hermes-function-calling-v1 data often
+    continues *past* the scored tool call -- e.g. system/user/.../
+    assistant(<tool_call>)/tool(response)/assistant(final NL summary).
+    Dropping only the last message would then prompt the model to continue
+    *after* the tool call already happened (correctly producing a plain NL
+    summary), while scoring compares that summary against the tool call
+    itself -- a guaranteed mismatch. Truncate instead to end right before
+    the same tool-calling turn `_last_expected_tool_call` scores against,
+    so the model is actually asked to produce it.
+    """
+    messages = example["messages"]
+    if example["category"] == "tool_call":
+        idx = _last_tool_call_turn_index(messages)
+        if idx is not None:
+            return messages[:idx]
+    return messages[:-1]
 
 
 def score_tool_call_example(expected_messages: list[dict], predicted_text: str) -> dict:
