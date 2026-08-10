@@ -10,7 +10,13 @@ import sys
 
 from llm_internal.eval.config import EvalConfig, load_eval_config
 from llm_internal.eval.generation import generate_cuda, generate_mlx, load_cuda_model, load_mlx_model, render_prompt
-from llm_internal.eval.scoring import Report, aggregate_results, score_plain_chat_example, score_tool_call_example
+from llm_internal.eval.scoring import (
+    Report,
+    aggregate_results,
+    score_plain_chat_example,
+    score_tool_call_example,
+    summarize_tool_call_failures,
+)
 from llm_internal.train.sft import load_split
 
 
@@ -76,6 +82,8 @@ def main() -> None:
     predictions = _load_and_generate(examples, cfg)
     report = evaluate_examples(examples, predictions, cfg)
 
+    if report.tool_call_accuracy < cfg.tool_call_accuracy_threshold:
+        print(summarize_tool_call_failures(examples, predictions))
     print(f"tool_call_accuracy={report.tool_call_accuracy:.3f} "
           f"plain_chat_pass_rate={report.plain_chat_pass_rate:.3f} passed={report.passed}")
     sys.exit(0 if report.passed else 1)

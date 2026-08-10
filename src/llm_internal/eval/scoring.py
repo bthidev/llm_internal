@@ -36,6 +36,54 @@ def parse_tool_calls_detailed(text: str) -> tuple[list[dict], int]:
     return calls, malformed
 
 
+def summarize_tool_call_failures(
+    examples: list[dict], predictions: list[str], max_samples: int = 5,
+) -> str:
+    """Human-readable diagnostic report for a failed/low tool_call_accuracy
+    run: aggregate signal (how many predictions contain no <tool_call> block
+    at all, vs. malformed JSON, vs. well-formed-but-wrong) plus a handful of
+    expected-vs-predicted samples. Printed to stdout at eval time (not part
+    of the pass/fail gate itself) so a failing run's Kaggle log carries
+    enough signal to diagnose without re-downloading the checkpoint.
+    """
+    lines = ["--- tool_call diagnostic samples ---"]
+    no_call = 0
+    malformed_any = 0
+    wrong_name = 0
+    wrong_args = 0
+    shown = 0
+    for example, predicted_text in zip(examples, predictions, strict=True):
+        if example["category"] != "tool_call":
+            continue
+        expected = _last_expected_tool_call(example["messages"])
+        predicted_calls, malformed = parse_tool_calls_detailed(predicted_text)
+        predicted = predicted_calls[0] if predicted_calls else None
+
+        if predicted is None:
+            if malformed:
+                malformed_any += 1
+            else:
+                no_call += 1
+        elif expected is not None and predicted.get("name") != expected.get("name"):
+            wrong_name += 1
+        elif expected is not None and predicted.get("arguments") != expected.get("arguments"):
+            wrong_args += 1
+
+        if shown < max_samples:
+            lines.append(
+                f"  expected={expected!r}\n"
+                f"  predicted_calls={predicted_calls!r} malformed={malformed}\n"
+                f"  raw_predicted_text={predicted_text[:300]!r}"
+            )
+            shown += 1
+
+    lines.append(
+        f"  totals: no_tool_call_block={no_call} malformed_json={malformed_any} "
+        f"wrong_name={wrong_name} wrong_args={wrong_args}"
+    )
+    return "\n".join(lines)
+
+
 def _last_expected_tool_call(expected_messages: list[dict]) -> dict | None:
     for message in reversed(expected_messages):
         if message["role"] == "assistant" and "<tool_call>" in message["content"]:

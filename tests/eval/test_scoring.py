@@ -5,6 +5,7 @@ from llm_internal.eval.scoring import (
     parse_tool_calls,
     score_plain_chat_example,
     score_tool_call_example,
+    summarize_tool_call_failures,
 )
 
 
@@ -111,3 +112,69 @@ def test_aggregate_results_fails_gate_below_threshold():
 
     assert report.tool_call_accuracy == 0.5
     assert report.passed is False
+
+
+
+def _example(messages, category="tool_call"):
+    return {"id": "x", "messages": messages, "category": category}
+
+
+def test_summarize_tool_call_failures_counts_missing_call():
+    examples = [_example([
+        {"role": "user", "content": "weather?"},
+        {"role": "assistant", "content": '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Paris"}}\n</tool_call>'},
+    ])]
+    predictions = ["Sure, let me help with that."]
+
+    summary = summarize_tool_call_failures(examples, predictions)
+
+    assert "no_tool_call_block=1" in summary
+    assert "malformed_json=0" in summary
+    assert "wrong_name=0" in summary
+    assert "wrong_args=0" in summary
+
+
+def test_summarize_tool_call_failures_counts_malformed_wrong_name_and_args():
+    expected_call = '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Paris"}}\n</tool_call>'
+    examples = [
+        _example([
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": expected_call},
+        ]),
+        _example([
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": expected_call},
+        ]),
+        _example([
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": expected_call},
+        ]),
+        _example([{"role": "user", "content": "hi"}], category="plain_chat"),
+    ]
+    predictions = [
+        "<tool_call>\nnot json\n</tool_call>",
+        '<tool_call>\n{"name": "get_time", "arguments": {"city": "Paris"}}\n</tool_call>',
+        '<tool_call>\n{"name": "get_weather", "arguments": {"city": "London"}}\n</tool_call>',
+        "hello there",
+    ]
+
+    summary = summarize_tool_call_failures(examples, predictions)
+
+    assert "no_tool_call_block=0" in summary
+    assert "malformed_json=1" in summary
+    assert "wrong_name=1" in summary
+    assert "wrong_args=1" in summary
+
+
+def test_summarize_tool_call_failures_truncates_samples():
+    expected_call = '<tool_call>\n{"name": "a", "arguments": {}}\n</tool_call>'
+    examples = [
+        _example([{"role": "user", "content": "?"}, {"role": "assistant", "content": expected_call}])
+        for _ in range(10)
+    ]
+    predictions = ["no call here"] * 10
+
+    summary = summarize_tool_call_failures(examples, predictions, max_samples=2)
+
+    assert summary.count("expected=") == 2
+    assert "no_tool_call_block=10" in summary
