@@ -8,7 +8,7 @@ from pathlib import Path
 from huggingface_hub import hf_hub_download
 
 from llm_internal.data.config import DataConfig, load_data_config
-from llm_internal.data.transform import dedupe_examples, format_example, stratified_split
+from llm_internal.data.transform import dedupe_examples, filter_malformed_tool_calls, format_example, stratified_split
 
 
 def write_jsonl(examples: list[dict], path: Path) -> None:
@@ -27,12 +27,15 @@ def prepare_dataset(
     seed: int = 42,
 ) -> dict[str, int]:
     """`raw_examples` are already-formatted examples (output of `format_example`,
-    each with a `"category"` key). Drops exact-content duplicates (keeping the
-    first occurrence) before splitting, so the same conversation can't leak
-    across `train`/`val`/`eval`. Writes train/val/eval.jsonl into `output_dir`.
-    Returns the example count per split.
+    each with a `"category"` key). Drops `tool_call` examples with a
+    malformed (non-JSON) `<tool_call>` target, then exact-content
+    duplicates (keeping the first occurrence), before splitting, so the
+    same conversation can't leak across `train`/`val`/`eval`. Writes
+    train/val/eval.jsonl into `output_dir`. Returns the example count per
+    split.
     """
-    deduped = dedupe_examples(raw_examples)
+    well_formed = filter_malformed_tool_calls(raw_examples)
+    deduped = dedupe_examples(well_formed)
     train, val, ev = stratified_split(deduped, train_ratio, val_ratio, eval_ratio, seed)
     output_dir = Path(output_dir)
     write_jsonl(train, output_dir / "train.jsonl")
@@ -72,7 +75,7 @@ def main() -> None:
         seed=cfg.seed,
     )
     after = counts["train"] + counts["val"] + counts["eval"]
-    print(f"dropped {before - after} exact-duplicate examples")
+    print(f"dropped {before - after} examples (malformed tool_call target or exact duplicate)")
     print(f"wrote splits: {counts}")
 
 

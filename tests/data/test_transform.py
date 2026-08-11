@@ -1,7 +1,7 @@
 # tests/data/test_transform.py
 import pytest
 
-from llm_internal.data.transform import dedupe_examples, format_example, stratified_split
+from llm_internal.data.transform import dedupe_examples, filter_malformed_tool_calls, format_example, stratified_split
 
 
 def _raw(conversations, ex_id="abc"):
@@ -108,3 +108,55 @@ def test_dedupe_examples_keeps_examples_with_same_id_but_different_content():
     result = dedupe_examples(examples)
 
     assert len(result) == 2
+
+
+
+def _tool_call_example(content, ex_id="tc"):
+    return {
+        "id": ex_id,
+        "messages": [
+            {"role": "user", "content": "?"},
+            {"role": "assistant", "content": content},
+        ],
+        "category": "tool_call",
+    }
+
+
+def test_filter_malformed_tool_calls_drops_invalid_json_target():
+    # Real defect found in hermes-function-calling-v1: a literal '\n' text
+    # sequence (not an actual newline) immediately after <tool_call>.
+    bad = _tool_call_example('<tool_call>\\n{"name": "f", "arguments": {}}\n</tool_call>')
+
+    assert filter_malformed_tool_calls([bad]) == []
+
+
+def test_filter_malformed_tool_calls_drops_python_repr_style_values():
+    bad = _tool_call_example("<tool_call>\n{'name': 'f', 'arguments': {}}\n</tool_call>")
+
+    assert filter_malformed_tool_calls([bad]) == []
+
+
+def test_filter_malformed_tool_calls_keeps_well_formed_examples():
+    good = _tool_call_example('<tool_call>\n{"name": "f", "arguments": {"x": 1}}\n</tool_call>')
+
+    assert filter_malformed_tool_calls([good]) == [good]
+
+
+def test_filter_malformed_tool_calls_ignores_plain_chat_examples():
+    plain = {"id": "pc", "messages": [{"role": "assistant", "content": "hi"}], "category": "plain_chat"}
+
+    assert filter_malformed_tool_calls([plain]) == [plain]
+
+
+def test_filter_malformed_tool_calls_requires_every_call_in_a_conversation_well_formed():
+    example = {
+        "id": "multi",
+        "messages": [
+            {"role": "assistant", "content": '<tool_call>\n{"name": "a", "arguments": {}}\n</tool_call>'},
+            {"role": "tool", "content": "ok"},
+            {"role": "assistant", "content": "<tool_call>\n{'name': 'b'}\n</tool_call>"},
+        ],
+        "category": "tool_call",
+    }
+
+    assert filter_malformed_tool_calls([example]) == []

@@ -6,6 +6,7 @@ data/processed/
 checkpoints/
 *.gguf
 kaggle_run.log
+kaggle_watch.log
 kaggle_output/
 .uvcache/
 .env
