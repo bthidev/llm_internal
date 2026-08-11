@@ -31,7 +31,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "[0/5] Seeding checkpoints from a prior session (if RESUME_FROM is set)..."
+echo "[0/6] Seeding checkpoints from a prior session (if RESUME_FROM is set)..."
 if [ -n "${RESUME_FROM:-}" ] && [ -d "$RESUME_FROM" ]; then
     mkdir -p checkpoints
     cp -r "$RESUME_FROM"/. checkpoints/
@@ -40,26 +40,34 @@ else
     echo "No RESUME_FROM set (or path missing) -- starting fresh."
 fi
 
-echo "[1/5] Installing dependencies..."
+echo "[1/6] Installing dependencies..."
 pip install -q uv
 uv sync --extra dev
 
-echo "[2/5] Preparing dataset (downloads NousResearch/hermes-function-calling-v1)..."
+echo "[2/6] Preparing dataset (downloads NousResearch/hermes-function-calling-v1)..."
 uv run python -m llm_internal.data.prepare
 
-echo "[3/5] Running QLoRA SFT training (resumes automatically if checkpoints exist)..."
+echo "[3/6] Running QLoRA SFT training (resumes automatically if checkpoints exist)..."
 uv run python -m llm_internal.train.sft
 
-echo "[4/5] Running held-out eval gate..."
+echo "[4/6] Running held-out eval gate..."
 if ! uv run python -m llm_internal.eval.run_eval; then
     echo "Eval gate failed -- checkpoint not exported. Inspect metrics above, adjust configs/train.yaml, and re-run training." >&2
     exit 1
 fi
 
-echo "[5/5] Exporting merged model to GGUF + Ollama Modelfile..."
+echo "[5/6] Comparing fine-tuned model against the original base model on the independent benchmark..."
+if ! uv run python -m llm_internal.eval.compare_models configs/benchmark_eval_base.yaml configs/benchmark_eval.yaml; then
+    echo "Benchmark comparison failed (fine-tuned gate failure or regression vs. base) -- checkpoint not exported." >&2
+    echo "See comparison_report.json and the table above, adjust configs/train.yaml, and re-run training." >&2
+    exit 1
+fi
+
+echo "[6/6] Exporting merged model to GGUF + Ollama Modelfile..."
 uv run python -m llm_internal.export.to_gguf
 
-echo "Done. checkpoints/ and export/ are under /kaggle/working/llm_internal."
+echo "Done. checkpoints/, export/, and comparison_report.json are under"
+echo "/kaggle/working/llm_internal."
 echo "Now: Kaggle menu -> Save Version -> Save & Run All (Commit), with"
 echo "'Always save output' checked, so checkpoints/ and export/ persist as"
 echo "notebook output. Download export/*.gguf and export/Modelfile from the"
