@@ -1,9 +1,11 @@
 """Pure transforms: raw hermes-function-calling-v1 examples -> Qwen3-ready
 chat examples, and a stratified train/val/eval split."""
+
 from __future__ import annotations
 
 import json
 import random
+import re
 
 ROLE_MAP = {
     "system": "system",
@@ -11,6 +13,8 @@ ROLE_MAP = {
     "gpt": "assistant",
     "tool": "tool",
 }
+
+_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 
 
 def format_example(raw: dict) -> dict:
@@ -27,9 +31,11 @@ def format_example(raw: dict) -> dict:
             raise ValueError(f"unknown role {turn['from']!r} in example {raw.get('id')!r}")
         messages.append({"role": role, "content": turn["value"]})
 
-    category = "tool_call" if any(
-        m["role"] == "assistant" and "<tool_call>" in m["content"] for m in messages
-    ) else "plain_chat"
+    category = (
+        "tool_call"
+        if any(m["role"] == "assistant" and "<tool_call>" in m["content"] for m in messages)
+        else "plain_chat"
+    )
 
     return {"id": raw.get("id"), "messages": messages, "category": category}
 
@@ -52,6 +58,41 @@ def dedupe_examples(examples: list[dict]) -> list[dict]:
     return result
 
 
+def _tool_calls_are_well_formed(messages: list[dict]) -> bool:
+    return all(
+        _is_valid_json(raw)
+        for message in messages
+        if message["role"] == "assistant"
+        for raw in _TOOL_CALL_RE.findall(message["content"])
+    )
+
+
+def _is_valid_json(raw: str) -> bool:
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    return True
+
+
+def filter_malformed_tool_calls(examples: list[dict]) -> list[dict]:
+    """Drop `tool_call`-category examples where any `<tool_call>` block in
+    the conversation doesn't parse as valid JSON (`plain_chat` examples are
+    unaffected). ~6.7% of raw hermes-function-calling-v1 tool_call blocks
+    are corrupted this way -- concretely, a literal (non-newline) `\\n`
+    text sequence immediately after `<tool_call>`, or Python-repr-style
+    single-quoted values instead of JSON double quotes, concentrated in
+    `func-calling.json`/`func-calling-singleturn.json`. Training on these
+    teaches the model to reproduce the corruption verbatim (confirmed: a
+    fine-tuned checkpoint's malformed-JSON eval failures matched the
+    eval split's own malformed-ground-truth count exactly). Keeping them
+    in eval also makes those examples unwinnable by construction, since
+    the ground truth itself doesn't parse -- pure noise in the accuracy
+    denominator either way.
+    """
+    return [ex for ex in examples if ex["category"] != "tool_call" or _tool_calls_are_well_formed(ex["messages"])]
+
+
 def stratified_split(
     examples: list[dict],
     train_ratio: float,
@@ -65,8 +106,7 @@ def stratified_split(
     """
     if abs((train_ratio + val_ratio + eval_ratio) - 1.0) > 1e-9:
         raise ValueError(
-            f"train_ratio + val_ratio + eval_ratio must equal 1.0, got "
-            f"{train_ratio} + {val_ratio} + {eval_ratio}"
+            f"train_ratio + val_ratio + eval_ratio must equal 1.0, got {train_ratio} + {val_ratio} + {eval_ratio}"
         )
 
     rng = random.Random(seed)
@@ -84,8 +124,8 @@ def stratified_split(
         n_train = int(n * train_ratio)
         n_val = int(n * val_ratio)
         train.extend(shuffled[:n_train])
-        val.extend(shuffled[n_train:n_train + n_val])
-        ev.extend(shuffled[n_train + n_val:])
+        val.extend(shuffled[n_train : n_train + n_val])
+        ev.extend(shuffled[n_train + n_val :])
 
     rng.shuffle(train)
     rng.shuffle(val)
