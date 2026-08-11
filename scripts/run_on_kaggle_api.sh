@@ -40,7 +40,7 @@ CHECKPOINT_DATASET_ID="$KAGGLE_USERNAME/homemade-llm-checkpoints"
 # kaggle kernels output has no server-side exclude, only an include
 # pattern -- so always scope downloads to these paths, or risk
 # hammering ListKernelSessionOutput into a rate-limit cooldown.
-OUT_FILE_PATTERN='.*llm_internal/checkpoints/.*|.*llm_internal/export/.*|.*__results__\.html'
+OUT_FILE_PATTERN='.*llm_internal/checkpoints/.*|.*llm_internal/export/.*|.*__results__\.html|.*comparison_report\.json'
 
 command -v kaggle >/dev/null || { echo "kaggle CLI not found -- pip install kaggle" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq not found -- required to patch kernel-metadata.json" >&2; exit 1; }

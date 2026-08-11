@@ -13,7 +13,7 @@ Plan: `docs/superpowers/plans/2026-08-07-homemade-llm.md`,
 
 1. **Prepare data** — download + format + split (`llm_internal.data.prepare`), backend-agnostic
 2. **Train** — QLoRA SFT (`llm_internal.train.sft`), dispatches on `configs/train.yaml`'s `backend`
-3. **Eval** — held-out gate on tool-call structural accuracy + plain-chat pass rate (`llm_internal.eval.run_eval`), plus an independent tool-calling benchmark with fine-grained metrics and quality gates (`llm_internal.eval.run_benchmark`); both dispatch on their config's `backend` -- see "Evaluation" below
+3. **Eval** — held-out gate on tool-call structural accuracy + plain-chat pass rate (`llm_internal.eval.run_eval`), then an independent tool-calling benchmark comparing the fine-tuned checkpoint against the original base model (`llm_internal.eval.compare_models`, wired into `scripts/run_on_kaggle.sh`/`run_on_runpod.sh`) -- see "Evaluation" below. `llm_internal.eval.run_benchmark` scores the fine-tuned model alone (by-category breakdown, no base-model comparison) for standalone/manual runs.
 4. **Export** — merge/fuse + quantize (`llm_internal.export.run_export`), dispatches on `configs/export.yaml`'s `backend`
 
 ## Backends
@@ -214,6 +214,11 @@ gate. `run_benchmark` additionally writes `benchmark_report.json` with the
 full overall/per-category/gate breakdown.
 
 ### Comparing base vs. fine-tuned
+
+Runs automatically as pipeline step 5/6 in `scripts/run_on_kaggle.sh` and
+`scripts/run_on_runpod.sh` (after the Hermes eval gate, before export --
+a fine-tuned-gate failure or any regression skips export, same as the
+Hermes gate). To run it manually against an existing checkpoint:
 
 ```bash
 uv run python -m llm_internal.eval.compare_models \
