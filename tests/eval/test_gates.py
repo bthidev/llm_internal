@@ -15,11 +15,22 @@ from llm_internal.eval.metrics import BenchmarkMetrics
 
 def _metrics(**overrides: float) -> BenchmarkMetrics:
     base = BenchmarkMetrics(
-        n_cases=10, tool_selection_accuracy=1.0, tool_call_precision=1.0, tool_call_recall=1.0,
-        false_positive_tool_rate=0.0, false_negative_tool_rate=0.0, argument_name_accuracy=1.0,
-        argument_value_accuracy=1.0, required_argument_accuracy=1.0, schema_validity_rate=1.0,
-        exact_tool_call_match=1.0, plain_chat_pass_rate=1.0, hallucinated_tool_name_rate=0.0,
-        hallucinated_argument_rate=0.0, missing_required_argument_rate=0.0,
+        n_cases=10,
+        tool_selection_accuracy=1.0,
+        tool_call_precision=1.0,
+        tool_call_recall=1.0,
+        false_positive_tool_rate=0.0,
+        false_negative_tool_rate=0.0,
+        argument_name_accuracy=1.0,
+        argument_value_accuracy=1.0,
+        required_argument_accuracy=1.0,
+        schema_validity_rate=1.0,
+        exact_tool_call_match=1.0,
+        plain_chat_pass_rate=1.0,
+        hallucinated_tool_name_rate=0.0,
+        hallucinated_argument_rate=0.0,
+        missing_required_argument_rate=0.0,
+        code_correctness_rate=1.0,
     )
     return dataclasses.replace(base, **overrides)
 

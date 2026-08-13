@@ -1,7 +1,16 @@
 # tests/data/test_transform.py
+import json
+
 import pytest
 
-from llm_internal.data.transform import dedupe_examples, filter_malformed_tool_calls, format_example, stratified_split
+from llm_internal.data.transform import (
+    dedupe_examples,
+    filter_malformed_tool_calls,
+    format_code_example,
+    format_example,
+    format_glaive_example,
+    stratified_split,
+)
 
 
 def _raw(conversations, ex_id="abc"):
@@ -9,13 +18,15 @@ def _raw(conversations, ex_id="abc"):
 
 
 def test_format_example_maps_roles_and_flags_tool_call():
-    raw = _raw([
-        {"from": "system", "value": "You are a function calling AI model.\n<tools>[]</tools>"},
-        {"from": "human", "value": "What's the weather?"},
-        {"from": "gpt", "value": '<tool_call>\n{"name": "get_weather", "arguments": {}}\n</tool_call>'},
-        {"from": "tool", "value": "<tool_response>\n{\"temp\": 20}\n</tool_response>"},
-        {"from": "gpt", "value": "It's 20 degrees."},
-    ])
+    raw = _raw(
+        [
+            {"from": "system", "value": "You are a function calling AI model.\n<tools>[]</tools>"},
+            {"from": "human", "value": "What's the weather?"},
+            {"from": "gpt", "value": '<tool_call>\n{"name": "get_weather", "arguments": {}}\n</tool_call>'},
+            {"from": "tool", "value": '<tool_response>\n{"temp": 20}\n</tool_response>'},
+            {"from": "gpt", "value": "It's 20 degrees."},
+        ]
+    )
 
     result = format_example(raw)
 
@@ -26,11 +37,13 @@ def test_format_example_maps_roles_and_flags_tool_call():
 
 
 def test_format_example_plain_chat_has_no_tool_call_tag():
-    raw = _raw([
-        {"from": "system", "value": "You are a helpful assistant."},
-        {"from": "human", "value": "Hi"},
-        {"from": "gpt", "value": "Hello! How can I help?"},
-    ])
+    raw = _raw(
+        [
+            {"from": "system", "value": "You are a helpful assistant."},
+            {"from": "human", "value": "Hi"},
+            {"from": "gpt", "value": "Hello! How can I help?"},
+        ]
+    )
 
     result = format_example(raw)
 
@@ -45,10 +58,9 @@ def test_format_example_rejects_unknown_role():
 
 
 def test_stratified_split_preserves_all_examples_no_overlap():
-    examples = (
-        [{"id": f"tc-{i}", "category": "tool_call"} for i in range(40)]
-        + [{"id": f"pc-{i}", "category": "plain_chat"} for i in range(20)]
-    )
+    examples = [{"id": f"tc-{i}", "category": "tool_call"} for i in range(40)] + [
+        {"id": f"pc-{i}", "category": "plain_chat"} for i in range(20)
+    ]
 
     train, val, ev = stratified_split(examples, train_ratio=0.8, val_ratio=0.1, eval_ratio=0.1, seed=42)
 
@@ -60,10 +72,9 @@ def test_stratified_split_preserves_all_examples_no_overlap():
 
 
 def test_stratified_split_keeps_category_proportions_in_each_split():
-    examples = (
-        [{"id": f"tc-{i}", "category": "tool_call"} for i in range(100)]
-        + [{"id": f"pc-{i}", "category": "plain_chat"} for i in range(100)]
-    )
+    examples = [{"id": f"tc-{i}", "category": "tool_call"} for i in range(100)] + [
+        {"id": f"pc-{i}", "category": "plain_chat"} for i in range(100)
+    ]
 
     train, val, ev = stratified_split(examples, train_ratio=0.9, val_ratio=0.05, eval_ratio=0.05, seed=42)
 
@@ -109,6 +120,92 @@ def test_dedupe_examples_keeps_examples_with_same_id_but_different_content():
 
     assert len(result) == 2
 
+
+def test_format_code_example_builds_plain_chat_messages():
+    raw = {"instruction": "Write a function that adds two numbers.", "output": "def add(a, b):\n    return a + b"}
+
+    result = format_code_example(raw, source="evol_code", index=3)
+
+    assert result["id"] == "evol_code-3"
+    assert result["category"] == "plain_chat"
+    assert [m["role"] for m in result["messages"]] == ["system", "user", "assistant"]
+    assert result["messages"][1]["content"] == "Write a function that adds two numbers."
+    assert result["messages"][2]["content"] == raw["output"]
+
+
+def test_format_code_example_appends_input_when_present():
+    raw = {"instruction": "Fix this bug.", "input": "def f(): return 1/0", "output": "def f(): return 1"}
+
+    result = format_code_example(raw, source="code_alpaca", index=0)
+
+    assert result["messages"][1]["content"] == "Fix this bug.\n\ndef f(): return 1/0"
+
+
+def _glaive_raw(system, chat):
+    return {"system": system, "chat": chat}
+
+
+def test_format_glaive_example_parses_tool_call_and_response():
+    system = (
+        "SYSTEM: You are a helpful assistant with access to the following functions. "
+        "Use them if required -\n"
+        '{"name": "get_news_headlines", "description": "Get news", '
+        '"parameters": {"type": "object", "properties": {"country": {"type": "string"}}, "required": ["country"]}}\n'
+    )
+    chat = (
+        "USER: What's the news in France?\n\n\n"
+        'ASSISTANT: <functioncall> {"name": "get_news_headlines", "arguments": \'{"country": "France"}\'} <|endoftext|>\n\n\n'
+        'FUNCTION RESPONSE: {"headlines": ["a", "b"]}\n\n\n'
+        "ASSISTANT: Here are the headlines. <|endoftext|>\n\n\n"
+    )
+
+    result = format_glaive_example(_glaive_raw(system, chat), source="glaive_v2", index=5)
+
+    assert result is not None
+    assert result["id"] == "glaive_v2-5"
+    assert result["category"] == "tool_call"
+    roles = [m["role"] for m in result["messages"]]
+    assert roles == ["system", "user", "assistant", "tool", "assistant"]
+    assert "<tools>" in result["messages"][0]["content"]
+
+    tool_call_content = result["messages"][2]["content"]
+    assert tool_call_content.startswith("<tool_call>\n") and tool_call_content.endswith("</tool_call>")
+    call_json = json.loads(tool_call_content.removeprefix("<tool_call>\n").removesuffix("\n</tool_call>"))
+    assert call_json == {"name": "get_news_headlines", "arguments": {"country": "France"}}
+
+    tool_response_content = result["messages"][3]["content"]
+    response_json = json.loads(
+        tool_response_content.removeprefix("<tool_response>\n").removesuffix("\n</tool_response>")
+    )
+    assert response_json == {"name": "get_news_headlines", "content": {"headlines": ["a", "b"]}}
+
+    assert result["messages"][4]["content"] == "Here are the headlines."
+
+
+def test_format_glaive_example_plain_chat_when_no_functions():
+    system = "SYSTEM: You are a helpful assistant, with no access to external functions.\n\n"
+    chat = "USER: Hi there.\n\n\nASSISTANT: Hello! <|endoftext|>\n\n\n"
+
+    result = format_glaive_example(_glaive_raw(system, chat), source="glaive_v2", index=0)
+
+    assert result is not None
+    assert result["category"] == "plain_chat"
+    assert "<tools>" not in result["messages"][0]["content"]
+
+
+def test_format_glaive_example_drops_unparseable_functioncall():
+    system = "SYSTEM: You are a helpful assistant with access to the following functions. Use them if required -\n"
+    chat = "USER: do it\n\n\nASSISTANT: <functioncall> not valid json at all <|endoftext|>\n\n\n"
+
+    result = format_glaive_example(_glaive_raw(system, chat), source="glaive_v2", index=0)
+
+    assert result is None
+
+
+def test_format_glaive_example_drops_when_chat_has_no_recognizable_turns():
+    result = format_glaive_example(_glaive_raw("SYSTEM: hi", "nothing turn-shaped here"), source="glaive_v2", index=0)
+
+    assert result is None
 
 
 def _tool_call_example(content, ex_id="tc"):

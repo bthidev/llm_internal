@@ -1,5 +1,7 @@
-"""Orchestrates dataset preparation: download raw hermes-function-calling-v1
-files, format them for Qwen3, split, and write train/val/eval JSONL files."""
+"""Orchestrates dataset preparation: download raw source-dataset files
+(hermes-function-calling-v1, glaive-function-calling-v2, Evol-Instruct-Code-80k,
+CodeAlpaca-20k), format them for Qwen3, split, and write train/val/eval JSONL files."""
+
 from __future__ import annotations
 
 import json
@@ -7,8 +9,31 @@ from pathlib import Path
 
 from huggingface_hub import hf_hub_download
 
-from llm_internal.data.config import DataConfig, load_data_config
-from llm_internal.data.transform import dedupe_examples, filter_malformed_tool_calls, format_example, stratified_split
+from llm_internal.data.config import DataConfig, SourceConfig, load_data_config
+from llm_internal.data.transform import (
+    dedupe_examples,
+    filter_malformed_tool_calls,
+    format_code_example,
+    format_example,
+    format_glaive_example,
+    stratified_split,
+)
+
+_FORMATTERS = {
+    "hermes": lambda raw, source, index: format_example(raw),
+    "alpaca_code": format_code_example,
+    "glaive": format_glaive_example,
+}
+
+
+def format_raw_example(fmt: str, raw: dict, source: str, index: int) -> dict | None:
+    """Dispatch to the transform selected by a `SourceConfig.format` value.
+    Returns `None` for rows a formatter drops as unparseable.
+    """
+    formatter = _FORMATTERS.get(fmt)
+    if formatter is None:
+        raise ValueError(f"unknown source format: {fmt!r}")
+    return formatter(raw, source, index)
 
 
 def write_jsonl(examples: list[dict], path: Path) -> None:
@@ -61,10 +86,22 @@ def download_raw_examples(dataset_repo: str, dataset_revision: str, dataset_file
     return merged
 
 
+def format_source(source: SourceConfig) -> list[dict]:
+    """Download and format every example from one `SourceConfig`, dropping rows
+    its formatter can't parse.
+    """
+    raw = download_raw_examples(source.dataset_repo, source.dataset_revision, source.dataset_files)
+    formatted = (format_raw_example(source.format, r, source.name, i) for i, r in enumerate(raw))
+    return [ex for ex in formatted if ex is not None]
+
+
 def main() -> None:
     cfg: DataConfig = load_data_config("configs/data.yaml")
-    raw = download_raw_examples(cfg.dataset_repo, cfg.dataset_revision, cfg.dataset_files)
-    formatted = [format_example(r) for r in raw]
+    formatted: list[dict] = []
+    for source in cfg.sources:
+        source_examples = format_source(source)
+        print(f"{source.name}: formatted {len(source_examples)} examples")
+        formatted.extend(source_examples)
     before = len(formatted)
     counts = prepare_dataset(
         formatted,

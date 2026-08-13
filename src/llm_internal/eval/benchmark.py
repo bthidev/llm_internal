@@ -34,10 +34,30 @@ inherently ambiguous cases: any one of the listed names (with any
 arguments) counts as a correct selection, instead of requiring an exact
 match against `expected_tool_calls`.
 
+A `"code_correctness"`-category case instead sets `expects_code: true`
+(mutually exclusive with `expects_tool_call`), `entry_point` (the function
+name the model must define), and `test_code` (assertions exercising that
+function, executed against the model's extracted code in a sandboxed
+subprocess -- see eval/code_exec.py), e.g.:
+
+    {
+      "id": "code_reverse_string",
+      "category": "code_correctness",
+      "description": "...",
+      "tools": [],
+      "messages": [ {"role": "system", "content": "..."},
+                     {"role": "user", "content": "Write a Python function..."} ],
+      "expects_tool_call": false,
+      "expects_code": true,
+      "entry_point": "reverse_string",
+      "test_code": "assert reverse_string('abc') == 'cba'"
+    }
+
 To add a case: append one JSON line to the benchmark file (or a new file
 merged in `configs/eval.yaml`'s `benchmark_files`). No schema migration,
 no code change required.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -48,18 +68,21 @@ from pathlib import Path
 # Every category the benchmark is expected to cover (task requirement);
 # `load_benchmark` doesn't enforce this set is exhaustive, it's documentation
 # plus a sanity check used by tests.
-CATEGORIES = frozenset({
-    "single_tool_selection",
-    "no_tool_plain_chat",
-    "ambiguous_tool_request",
-    "nonexistent_tool_request",
-    "multi_tool_choice",
-    "complex_arguments",
-    "optional_nullable_arguments",
-    "nested_arguments",
-    "parallel_tool_calls",
-    "must_not_call_tool",
-})
+CATEGORIES = frozenset(
+    {
+        "single_tool_selection",
+        "no_tool_plain_chat",
+        "ambiguous_tool_request",
+        "nonexistent_tool_request",
+        "multi_tool_choice",
+        "complex_arguments",
+        "optional_nullable_arguments",
+        "nested_arguments",
+        "parallel_tool_calls",
+        "must_not_call_tool",
+        "code_correctness",
+    }
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -72,6 +95,10 @@ class BenchmarkCase:
     expects_tool_call: bool
     expected_tool_calls: list[dict] = dataclasses.field(default_factory=list)
     acceptable_tool_names: list[str] | None = None
+    expects_code: bool = False
+    entry_point: str = ""
+    test_code: str = ""
+    timeout_s: float = 5.0
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -85,15 +112,18 @@ class BenchmarkCase:
                 f"case {self.id!r}: last message must be 'user' or 'tool' "
                 f"(the turn the model replies to), got {self.messages[-1]['role']!r}"
             )
+        if self.expects_code and self.expects_tool_call:
+            raise ValueError(f"case {self.id!r}: expects_code and expects_tool_call are mutually exclusive")
+        if self.expects_code and (not self.entry_point or not self.test_code):
+            raise ValueError(f"case {self.id!r}: expects_code=true requires entry_point and test_code")
+        if not self.expects_code and (self.entry_point or self.test_code):
+            raise ValueError(f"case {self.id!r}: entry_point/test_code set but expects_code=false")
         if self.expects_tool_call and not self.expected_tool_calls and not self.acceptable_tool_names:
             raise ValueError(
-                f"case {self.id!r}: expects_tool_call=true requires "
-                "expected_tool_calls and/or acceptable_tool_names"
+                f"case {self.id!r}: expects_tool_call=true requires expected_tool_calls and/or acceptable_tool_names"
             )
         if not self.expects_tool_call and self.expected_tool_calls:
-            raise ValueError(
-                f"case {self.id!r}: expects_tool_call=false but expected_tool_calls is non-empty"
-            )
+            raise ValueError(f"case {self.id!r}: expects_tool_call=false but expected_tool_calls is non-empty")
 
 
 def _case_from_dict(raw: dict, source: str, line_no: int) -> BenchmarkCase:

@@ -19,7 +19,7 @@ Plan: `docs/superpowers/plans/2026-08-07-homemade-llm.md`,
 ## Backends
 
 | | `backend: cuda` (default) | `backend: mlx` |
-|---|---|---|
+| --- | --- | --- |
 | Hardware | Rented CUDA GPU | Apple Silicon Mac |
 | Training | Unsloth `FastLanguageModel` + TRL `SFTTrainer` | `mlx_lm.lora` (QLoRA on a locally quantized base) |
 | Eval generation | `transformers` | `mlx_lm.generate` |
@@ -56,7 +56,7 @@ real hardware; run them via the `scripts/run_on_*.sh` entry points below.
 
 ## Config
 
-- `configs/data.yaml` — dataset source, revision pin, split ratios
+- `configs/data.yaml` — dataset sources (each pinned repo/revision/files/format), split ratios
 - `configs/train.yaml` — base model + pinned revision, LoRA hyperparameters, training schedule, `backend`
 - `configs/eval.yaml` — Hermes held-out split gate thresholds, `backend`
 - `configs/benchmark_eval.yaml` — independent benchmark config (fine-tuned model), gate overrides, `backend`
@@ -70,15 +70,18 @@ real hardware; run them via the `scripts/run_on_*.sh` entry points below.
   deterministic reruns; `configs/benchmark_eval*.yaml`'s `seed` is
   reserved for future sampling-based generation (current eval is greedy
   decoding, which is already deterministic).
-- **Dataset revision**: `configs/data.yaml`'s `dataset_revision` pins
-  `NousResearch/hermes-function-calling-v1` to an immutable commit sha —
-  left unchanged by this work per the task constraints.
+- **Dataset revisions**: each entry in `configs/data.yaml`'s `sources` pins its
+  `dataset_repo` to an immutable commit sha via `dataset_revision`:
+  `NousResearch/hermes-function-calling-v1` and `glaiveai/glaive-function-calling-v2`
+  (tool-call formats, converted to Qwen3's `<tool_call>`/`<tool_response>` tags),
+  `nickrosh/Evol-Instruct-Code-80k-v1` (CC-BY-NC-SA-4.0 — non-commercial) and
+  `sahil2801/CodeAlpaca-20k` (plain coding instruction/output pairs).
 - **Base model revision**: `configs/train.yaml`'s `base_model_revision`
   pins `Qwen/Qwen3-1.7B` to an immutable commit sha (rather than the
   mutable `main` ref), threaded through every load site (Unsloth's
   `FastLanguageModel.from_pretrained`, `mlx_lm.convert`,
   `eval/generation.py`'s CUDA/MLX loaders). To pick up a newer release:
-  check https://huggingface.co/Qwen/Qwen3-1.7B/commits/main for the new
+  check <https://huggingface.co/Qwen/Qwen3-1.7B/commits/main> for the new
   commit sha, update `base_model_revision` in both `configs/train.yaml`
   and `configs/benchmark_eval_base.yaml`, and re-run training + the
   base-vs-fine-tuned comparison.
@@ -123,17 +126,29 @@ docstring for the full field reference (including `acceptable_tool_names`,
 used for inherently ambiguous cases where more than one tool selection is
 correct).
 
-The initial dataset covers 26 cases across 10 scenario categories:
+The initial dataset covers 31 cases across 11 scenario categories:
 `single_tool_selection`, `no_tool_plain_chat`, `ambiguous_tool_request`,
 `nonexistent_tool_request`, `multi_tool_choice`, `complex_arguments`,
 `optional_nullable_arguments`, `nested_arguments`, `parallel_tool_calls`,
-`must_not_call_tool`. Failure modes like hallucinated tool names/arguments,
-missing required arguments, and incorrect argument values aren't separate
-*case* categories (a prompt can't itself "hallucinate" -- only a model's
-reply can) -- they're detected generically from any case's prediction by
-the metrics below (`hallucinated_tool_name_rate`,
+`must_not_call_tool`, `code_correctness`. Failure modes like hallucinated
+tool names/arguments, missing required arguments, and incorrect argument
+values aren't separate *case* categories (a prompt can't itself
+"hallucinate" -- only a model's reply can) -- they're detected generically
+from any case's prediction by the metrics below (`hallucinated_tool_name_rate`,
 `hallucinated_argument_rate`, `missing_required_argument_rate`,
 `argument_value_accuracy`).
+
+`code_correctness` cases are scored differently from every other category:
+instead of tool-call structural matching, `expects_code: true` cases set
+`entry_point` (the function name the model must define) and `test_code`
+(assertions exercising it). The model's reply is extracted (fenced code
+block, or bare code as a fallback) and executed together with `test_code`
+in an isolated subprocess with a wall-clock timeout
+(`llm_internal.eval.code_exec.run_code_case`) -- real pass/fail via actual
+execution, not a heuristic. These cases are fully excluded from every
+tool-call/plain-chat metric's denominator (and vice versa); they only feed
+the dedicated `code_correctness_rate` metric below, so a regression in one
+capability can't be masked by the other.
 
 **To add a case:** append one JSON line to `data/benchmark/cases.jsonl`
 (or a new file, then list it under `benchmark_files` in
@@ -148,7 +163,7 @@ and/or `acceptable_tool_names` present whenever `expects_tool_call` is
 `llm_internal.eval.metrics` computes, globally and per-category:
 
 | Metric | Question it answers |
-|---|---|
+| --- | --- |
 | `tool_selection_accuracy` | Right tool(s) called, or rightly none? |
 | `tool_call_precision` / `tool_call_recall` | Per-call precision/recall of predicted vs. expected tool names (parallel calls matched independently) |
 | `false_positive_tool_rate` | Of cases expecting *no* call, how often did the model call one anyway? |
@@ -162,6 +177,7 @@ and/or `acceptable_tool_names` present whenever `expects_tool_call` is
 | `hallucinated_tool_name_rate` | Predicted calls naming a tool absent from the case's declared `tools` |
 | `hallucinated_argument_rate` | Predicted argument names absent from the tool's schema `properties` |
 | `missing_required_argument_rate` | Complement of `required_argument_accuracy` |
+| `code_correctness_rate` | Fraction of `code_correctness` cases whose generated code passes its sandboxed test execution |
 
 These are deliberately kept separate (never averaged into one score) so a
 model can't hide an argument-value regression behind a good tool-selection

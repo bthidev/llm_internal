@@ -1,11 +1,37 @@
-dataset_repo: NousResearch/hermes-function-calling-v1
-dataset_revision: dae3e1d28cfbcf4b915c04ea1e072030529b4bda
-dataset_files:
-  - func-calling.json
-  - func-calling-singleturn.json
-  - glaive-function-calling-5k.json
-  - json-mode-agentic.json
-  - json-mode-singleturn.json
+sources:
+  - name: hermes
+    format: hermes
+    dataset_repo: NousResearch/hermes-function-calling-v1
+    dataset_revision: dae3e1d28cfbcf4b915c04ea1e072030529b4bda
+    dataset_files:
+      - func-calling.json
+      - func-calling-singleturn.json
+      - glaive-function-calling-5k.json
+      - json-mode-agentic.json
+      - json-mode-singleturn.json
+  # Apache-2.0. Bigger, more varied tool-use than hermes' bundled glaive-5k slice
+  # -- multi-turn, real function-response turns.
+  - name: glaive_v2
+    format: glaive
+    dataset_repo: glaiveai/glaive-function-calling-v2
+    dataset_revision: e7f4b6456019f5d8bcb991ef0dd67d8ff23221ac
+    dataset_files:
+      - glaive-function-calling-v2.json
+  # CC-BY-NC-SA-4.0 -- non-commercial, share-alike. Don't use for a
+  # commercially-distributed checkpoint.
+  - name: evol_code
+    format: alpaca_code
+    dataset_repo: nickrosh/Evol-Instruct-Code-80k-v1
+    dataset_revision: 3ae930c20d5496e2c8386872d5628c45f6957db4
+    dataset_files:
+      - EvolInstruct-Code-80k.json
+  # CC-BY-4.0
+  - name: code_alpaca
+    format: alpaca_code
+    dataset_repo: sahil2801/CodeAlpaca-20k
+    dataset_revision: 152bb5e9a29651266b018106053980070a0521a1
+    dataset_files:
+      - code_alpaca_20k.json
 output_dir: data/processed
 train_ratio: 0.9
 val_ratio: 0.05

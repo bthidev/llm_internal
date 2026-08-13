@@ -33,12 +33,15 @@ def _tool_case(
     acceptable_tool_names: list[str] | None = None,
 ) -> BenchmarkCase:
     return BenchmarkCase(
-        id=id, category="single_tool_selection", description="d",
+        id=id,
+        category="single_tool_selection",
+        description="d",
         tools=tools if tools is not None else [_WEATHER_TOOL],
         messages=[{"role": "user", "content": "weather in Paris?"}],
         expects_tool_call=True,
         expected_tool_calls=(
-            expected_tool_calls if expected_tool_calls is not None
+            expected_tool_calls
+            if expected_tool_calls is not None
             else [{"name": "get_weather", "arguments": {"city": "Paris"}}]
         ),
         acceptable_tool_names=acceptable_tool_names,
@@ -47,7 +50,10 @@ def _tool_case(
 
 def _plain_case() -> BenchmarkCase:
     return BenchmarkCase(
-        id="p1", category="no_tool_plain_chat", description="d", tools=[],
+        id="p1",
+        category="no_tool_plain_chat",
+        description="d",
+        tools=[],
         messages=[{"role": "user", "content": "hi"}],
         expects_tool_call=False,
     )
@@ -170,7 +176,9 @@ def test_score_case_valid_json_with_wrong_shape_counts_as_schema_invalid():
 
 def test_score_case_ambiguous_case_accepts_any_listed_tool():
     case = _tool_case(
-        id="amb1", expected_tool_calls=[], acceptable_tool_names=["get_weather", "get_stock_price"],
+        id="amb1",
+        expected_tool_calls=[],
+        acceptable_tool_names=["get_weather", "get_stock_price"],
         tools=[_WEATHER_TOOL, _STOCK_TOOL],
     )
     predicted = '<tool_call>\n{"name": "get_stock_price", "arguments": {"symbol": "AAPL"}}\n</tool_call>'
@@ -182,7 +190,8 @@ def test_score_case_ambiguous_case_accepts_any_listed_tool():
 
 def test_score_case_parallel_calls_matched_independently():
     case = _tool_case(
-        id="par1", tools=[_WEATHER_TOOL, _STOCK_TOOL],
+        id="par1",
+        tools=[_WEATHER_TOOL, _STOCK_TOOL],
         expected_tool_calls=[
             {"name": "get_weather", "arguments": {"city": "Berlin"}},
             {"name": "get_stock_price", "arguments": {"symbol": "MSFT"}},
@@ -223,6 +232,57 @@ def test_aggregate_metrics_rejects_empty_results():
 def test_score_benchmark_requires_matching_lengths():
     with pytest.raises(ValueError):
         score_benchmark([_tool_case()], [])
+
+
+def _code_case(id: str = "code1") -> BenchmarkCase:
+    return BenchmarkCase(
+        id=id,
+        category="code_correctness",
+        description="d",
+        tools=[],
+        messages=[{"role": "user", "content": "write add(a, b)"}],
+        expects_tool_call=False,
+        expects_code=True,
+        entry_point="add",
+        test_code="assert add(2, 3) == 5",
+    )
+
+
+def test_score_case_code_correctness_passes_on_correct_implementation():
+    case = _code_case()
+
+    result = score_case(case, "```python\ndef add(a, b):\n    return a + b\n```")
+
+    assert result.is_code is True
+    assert result.code_correctness_passed is True
+    assert result.code_exec_error is None
+
+
+def test_score_case_code_correctness_fails_on_incorrect_implementation():
+    case = _code_case()
+
+    result = score_case(case, "```python\ndef add(a, b):\n    return a - b\n```")
+
+    assert result.is_code is True
+    assert result.code_correctness_passed is False
+    assert result.code_exec_error is not None
+
+
+def test_code_case_excluded_from_tool_and_plain_chat_metrics():
+    """A code case must not pollute tool_selection_accuracy/plain_chat_pass_rate
+    denominators -- it's scored by a completely separate code_correctness_rate."""
+    tool_case = _tool_case()
+    tool_predicted = '<tool_call>\n{"name": "get_weather", "arguments": {"city": "Paris"}}\n</tool_call>'
+    code_case = _code_case()
+
+    report = score_benchmark(
+        [tool_case, code_case],
+        [tool_predicted, "```python\ndef add(a, b):\n    return a - b\n```"],  # wrong code
+    )
+
+    assert report.overall.tool_selection_accuracy == 1.0  # unaffected by the failing code case
+    assert report.overall.code_correctness_rate == 0.0
+    assert report.by_category["code_correctness"].code_correctness_rate == 0.0
 
 
 def test_argument_value_accuracy_isolated_from_tool_selection_accuracy():
