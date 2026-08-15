@@ -8,6 +8,7 @@ every prompt here is hand-authored and independent from the training data
 `run_benchmark` is pure given `predictions` (no model/GPU); `main` wires it
 to a real model load + generation via eval/generation.py, dispatched on
 BenchmarkEvalConfig.backend."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -22,7 +23,9 @@ from llm_internal.eval.metrics import BenchmarkReport, score_benchmark
 
 
 def run_benchmark(
-    cases: list[BenchmarkCase], predictions: list[str], cfg: BenchmarkEvalConfig,
+    cases: list[BenchmarkCase],
+    predictions: list[str],
+    cfg: BenchmarkEvalConfig,
 ) -> tuple[BenchmarkReport, list[GateResult]]:
     """Pure: scores `predictions` against `cases` and evaluates the
     configured quality gates. No model/GPU involved."""
@@ -37,7 +40,11 @@ def generate_benchmark_predictions(cases: list[BenchmarkCase], cfg: BenchmarkEva
     case's `messages` (already the full prompt -- no trailing turn to
     drop, unlike the Hermes split)."""
     return generate_for_messages(
-        [c.messages for c in cases], cfg.backend, cfg.model_dir, cfg.max_new_tokens, cfg.model_revision,
+        [c.messages for c in cases],
+        cfg.backend,
+        cfg.model_dir,
+        cfg.max_new_tokens,
+        cfg.model_revision,
     )
 
 
@@ -52,7 +59,8 @@ def format_report(report: BenchmarkReport, gate_results: list[GateResult]) -> st
             f"{category}: n={metrics.n_cases} "
             f"tool_selection_accuracy={metrics.tool_selection_accuracy:.3f} "
             f"exact_tool_call_match={metrics.exact_tool_call_match:.3f} "
-            f"plain_chat_pass_rate={metrics.plain_chat_pass_rate:.3f}"
+            f"plain_chat_pass_rate={metrics.plain_chat_pass_rate:.3f} "
+            f"code_correctness_rate={metrics.code_correctness_rate:.3f}"
         )
     lines.append("")
     lines.append("=== gates ===")

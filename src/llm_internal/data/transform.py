@@ -1,5 +1,5 @@
-"""Pure transforms: raw hermes-function-calling-v1 examples -> Qwen3-ready
-chat examples, and a stratified train/val/eval split."""
+"""Pure transforms: raw source-dataset examples -> Qwen3-ready chat examples,
+and a stratified train/val/eval split."""
 
 from __future__ import annotations
 
@@ -15,6 +15,28 @@ ROLE_MAP = {
 }
 
 _TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+
+CODE_SYSTEM_PROMPT = (
+    "You are an expert software engineer. Write complete, correct, runnable code "
+    "in the language requested by the user. Follow the requested language, "
+    "interface, and constraints. Explain the approach briefly when requested."
+)
+
+_HERMES_TOOL_SYSTEM_PREFIX = (
+    "You are a function calling AI model. You are provided with function "
+    "signatures within <tools> </tools> XML tags. You may call one or more "
+    "functions to assist with the user query. Don't make assumptions about "
+    "what values to plug into functions."
+)
+
+_GLAIVE_FUNCTIONS_MARKER = "Use them if required -"
+_GLAIVE_TURN_RE = re.compile(r"(USER|ASSISTANT|FUNCTION RESPONSE): ")
+# `arguments` is sometimes a Python-repr-style single-quoted JSON *string* and
+# sometimes already a raw JSON object -- see `_parse_glaive_functioncall`.
+_GLAIVE_FUNCTIONCALL_QUOTED_ARGS_RE = re.compile(
+    r"""^<functioncall>\s*\{"name":\s*"([^"]+)",\s*"arguments":\s*'(.*)'\}\s*$""",
+    re.DOTALL,
+)
 
 
 def format_example(raw: dict) -> dict:
@@ -38,6 +60,167 @@ def format_example(raw: dict) -> dict:
     )
 
     return {"id": raw.get("id"), "messages": messages, "category": category}
+
+
+def format_code_example(raw: dict, source: str, index: int) -> dict:
+    """Convert one raw flat instruction-tuning example (`{"instruction", "output"}`,
+    optionally `{"input"}` -- Evol-Instruct-Code-80k-v1 / CodeAlpaca-20k shape)
+    into the same `{"id", "messages", "category"}` shape as `format_example`.
+    Always `"plain_chat"`: these sources carry no tool-call targets. `id` is
+    synthesized from `source` + `index` since neither dataset has a natural id.
+    """
+    extra_input = raw.get("input") or ""
+    user_content = raw["instruction"] if not extra_input else f"{raw['instruction']}\n\n{extra_input}"
+    messages = [
+        {"role": "system", "content": CODE_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+        {"role": "assistant", "content": raw["output"]},
+    ]
+    return {"id": f"{source}-{index}", "messages": messages, "category": "plain_chat"}
+
+
+def _extract_glaive_tools(system_body: str) -> list[dict]:
+    """Pull the (possibly multiple, back-to-back) JSON function-schema objects
+    out of a glaive-function-calling-v2 `system` field. Returns `[]` when the
+    row has no tools (e.g. "you have no access to external functions").
+    """
+    marker_idx = system_body.find(_GLAIVE_FUNCTIONS_MARKER)
+    if marker_idx == -1:
+        return []
+    text = system_body[marker_idx + len(_GLAIVE_FUNCTIONS_MARKER) :].strip()
+
+    decoder = json.JSONDecoder()
+    tools = []
+    pos = 0
+    while pos < len(text):
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        if pos >= len(text):
+            break
+        try:
+            obj, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            break
+        tools.append(obj)
+        pos = end
+    return tools
+
+
+def _parse_glaive_functioncall(content: str) -> dict | None:
+    """Parse a `<functioncall> {...}</functioncall>`-delimited payload into
+    `{"name", "arguments"}`. glaive-function-calling-v2 emits two shapes for
+    the same field: `"arguments"` as a Python-repr-style single-quoted JSON
+    *string* (most rows), or already a raw JSON object (some rows, notably
+    empty-argument calls). Returns `None` if neither shape parses.
+    """
+    body = content.removeprefix("<functioncall>").strip()
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        pass
+    else:
+        if isinstance(payload, dict) and isinstance(payload.get("name"), str):
+            return {"name": payload["name"], "arguments": payload.get("arguments", {})}
+        return None
+
+    quoted_match = _GLAIVE_FUNCTIONCALL_QUOTED_ARGS_RE.match(content)
+    if quoted_match is None:
+        return None
+    name, args_raw = quoted_match.group(1), quoted_match.group(2)
+    try:
+        arguments = json.loads(args_raw)
+    except json.JSONDecodeError:
+        return None
+    return {"name": name, "arguments": arguments}
+
+
+def _parse_glaive_chat(chat_text: str) -> list[dict] | None:
+    """Parse a glaive-function-calling-v2 `chat` blob (`"USER: ...\\n\\n\\nASSISTANT:
+    ..."`) into `{"role", "content"}` messages, rewriting `<functioncall>
+    {"name": ..., "arguments": '...'}` into Hermes-style `<tool_call>` JSON and
+    `FUNCTION RESPONSE:` turns into `<tool_response>` JSON. Returns `None` when
+    a turn doesn't match the expected shape (dropped by the caller) rather than
+    risk emitting a corrupted training target.
+    """
+    matches = list(_GLAIVE_TURN_RE.finditer(chat_text))
+    if not matches:
+        return None
+
+    messages: list[dict] = []
+    last_function_name: str | None = None
+    for i, m in enumerate(matches):
+        role_label = m.group(1)
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(chat_text)
+        content = chat_text[m.end() : end].strip()
+
+        if role_label == "USER":
+            messages.append({"role": "user", "content": content})
+            continue
+
+        if role_label == "ASSISTANT":
+            content = content.split("<|endoftext|>")[0].strip()
+            if "<functioncall>" not in content:
+                messages.append({"role": "assistant", "content": content})
+                continue
+            tool_call = _parse_glaive_functioncall(content)
+            if tool_call is None:
+                return None
+            last_function_name = tool_call["name"]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"<tool_call>\n{json.dumps(tool_call)}\n</tool_call>",
+                }
+            )
+            continue
+
+        # FUNCTION RESPONSE
+        if last_function_name is None:
+            return None
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        tool_response = {"name": last_function_name, "content": parsed}
+        messages.append(
+            {
+                "role": "tool",
+                "content": f"<tool_response>\n{json.dumps(tool_response)}\n</tool_response>",
+            }
+        )
+
+    return messages or None
+
+
+def format_glaive_example(raw: dict, source: str, index: int) -> dict | None:
+    """Convert one raw glaive-function-calling-v2 example (`{"system", "chat"}`
+    free-text fields) into the same `{"id", "messages", "category"}` shape as
+    `format_example`. Returns `None` when the row doesn't parse cleanly (caller
+    drops it) instead of emitting a malformed training target.
+    """
+    system_body = re.sub(r"^SYSTEM:\s*", "", raw.get("system") or "")
+    tool_defs = _extract_glaive_tools(system_body)
+    if tool_defs:
+        system_content = (
+            _HERMES_TOOL_SYSTEM_PREFIX
+            + "\n<tools>\n"
+            + json.dumps([{"type": "function", "function": t} for t in tool_defs])
+            + "\n</tools>"
+        )
+    else:
+        system_content = system_body.strip() or "You are a helpful assistant."
+
+    turns = _parse_glaive_chat(raw.get("chat") or "")
+    if turns is None:
+        return None
+
+    messages = [{"role": "system", "content": system_content}, *turns]
+    category = (
+        "tool_call"
+        if any(m["role"] == "assistant" and "<tool_call>" in m["content"] for m in messages)
+        else "plain_chat"
+    )
+    return {"id": f"{source}-{index}", "messages": messages, "category": category}
 
 
 def dedupe_examples(examples: list[dict]) -> list[dict]:

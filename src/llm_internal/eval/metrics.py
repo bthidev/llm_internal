@@ -20,11 +20,13 @@ Three questions are answered *separately*, on purpose (a task requirement):
 A model can ace (1) while failing (2)/(3), or vice versa; the metrics never
 collapse into one score that could hide that.
 """
+
 from __future__ import annotations
 
 import dataclasses
 
 from llm_internal.eval.benchmark import BenchmarkCase
+from llm_internal.eval.code_exec import run_code_case
 from llm_internal.eval.plain_chat import check_plain_chat_response
 from llm_internal.eval.scoring import parse_tool_calls_detailed
 
@@ -99,8 +101,34 @@ class CaseResult:
     plain_chat_passed: bool | None = None  # only set when not expects_tool_call and no stray call
     plain_chat_reasons: tuple[str, ...] = ()
 
+    # code-correctness cases (expects_code=True): fully separate from every
+    # field above, which stays at its dataclass default for these.
+    is_code: bool = False
+    code_correctness_passed: bool | None = None
+    code_exec_error: str | None = None
+
 
 def score_case(case: BenchmarkCase, predicted_text: str, min_plain_chat_chars: int = 5) -> CaseResult:
+    if case.expects_code:
+        exec_result = run_code_case(predicted_text, case.entry_point, case.test_code, case.timeout_s)
+        return CaseResult(
+            id=case.id,
+            category=case.category,
+            expects_tool_call=False,
+            predicted_call_count=0,
+            malformed_json_blocks=0,
+            schema_valid_calls=0,
+            schema_invalid_calls=0,
+            hallucinated_tool_names=0,
+            tool_selection_correct=True,
+            exact_match=exec_result.passed,
+            false_positive_tool=False,
+            false_negative_tool=False,
+            is_code=True,
+            code_correctness_passed=exec_result.passed,
+            code_exec_error=exec_result.error,
+        )
+
     predicted_calls_raw, malformed = parse_tool_calls_detailed(predicted_text)
 
     # Structural validity: a parsed block counts as schema-valid only if it
@@ -125,20 +153,27 @@ def score_case(case: BenchmarkCase, predicted_text: str, min_plain_chat_chars: i
         false_positive = len(predicted_calls_raw) > 0
         plain_chat = None if false_positive else check_plain_chat_response(predicted_text, min_plain_chat_chars)
         return CaseResult(
-            id=case.id, category=case.category, expects_tool_call=False,
-            predicted_call_count=len(predicted_calls_raw), malformed_json_blocks=malformed,
-            schema_valid_calls=schema_valid, schema_invalid_calls=schema_invalid,
+            id=case.id,
+            category=case.category,
+            expects_tool_call=False,
+            predicted_call_count=len(predicted_calls_raw),
+            malformed_json_blocks=malformed,
+            schema_valid_calls=schema_valid,
+            schema_invalid_calls=schema_invalid,
             hallucinated_tool_names=hallucinated_tool_names,
-            tool_selection_correct=not false_positive, exact_match=not false_positive,
-            false_positive_tool=false_positive, false_negative_tool=False,
-            call_tp=0, call_fp=len(predicted_calls), call_fn=0,
+            tool_selection_correct=not false_positive,
+            exact_match=not false_positive,
+            false_positive_tool=false_positive,
+            false_negative_tool=False,
+            call_tp=0,
+            call_fp=len(predicted_calls),
+            call_fn=0,
             plain_chat_passed=(plain_chat.passed if plain_chat else None),
             plain_chat_reasons=(plain_chat.reasons if plain_chat else ()),
         )
 
     expected_names = (
-        set(case.acceptable_tool_names) if case.acceptable_tool_names
-        else {c["name"] for c in case.expected_tool_calls}
+        set(case.acceptable_tool_names) if case.acceptable_tool_names else {c["name"] for c in case.expected_tool_calls}
     )
     predicted_names = {c["name"] for c in predicted_calls}
     false_negative = len(predicted_calls) == 0
@@ -157,7 +192,8 @@ def score_case(case: BenchmarkCase, predicted_text: str, min_plain_chat_chars: i
         tool_selection_correct = predicted_names == expected_names
         matched, unmatched_expected, unmatched_predicted = _match_calls(case.expected_tool_calls, predicted_calls)
         exact_match = (
-            not unmatched_expected and not unmatched_predicted
+            not unmatched_expected
+            and not unmatched_predicted
             and all(m.expected.get("arguments") == m.predicted.get("arguments") for m in matched)
         )
         call_tp, call_fp, call_fn = len(matched), len(unmatched_predicted), len(unmatched_expected)
@@ -189,17 +225,29 @@ def score_case(case: BenchmarkCase, predicted_text: str, min_plain_chat_chars: i
             hallucinated_arg_count += len(pred_keys - properties)
 
     return CaseResult(
-        id=case.id, category=case.category, expects_tool_call=True,
-        predicted_call_count=len(predicted_calls_raw), malformed_json_blocks=malformed,
-        schema_valid_calls=schema_valid, schema_invalid_calls=schema_invalid,
+        id=case.id,
+        category=case.category,
+        expects_tool_call=True,
+        predicted_call_count=len(predicted_calls_raw),
+        malformed_json_blocks=malformed,
+        schema_valid_calls=schema_valid,
+        schema_invalid_calls=schema_invalid,
         hallucinated_tool_names=hallucinated_tool_names,
-        tool_selection_correct=tool_selection_correct, exact_match=exact_match,
-        false_positive_tool=False, false_negative_tool=false_negative,
-        call_tp=call_tp, call_fp=call_fp, call_fn=call_fn,
-        arg_name_tp=arg_name_tp, arg_name_fp=arg_name_fp, arg_name_fn=arg_name_fn,
+        tool_selection_correct=tool_selection_correct,
+        exact_match=exact_match,
+        false_positive_tool=False,
+        false_negative_tool=false_negative,
+        call_tp=call_tp,
+        call_fp=call_fp,
+        call_fn=call_fn,
+        arg_name_tp=arg_name_tp,
+        arg_name_fp=arg_name_fp,
+        arg_name_fn=arg_name_fn,
         arg_value_correct=arg_value_correct,
-        required_total=required_total, required_present=required_present,
-        hallucinated_arg_count=hallucinated_arg_count, predicted_arg_count=predicted_arg_count,
+        required_total=required_total,
+        required_present=required_present,
+        hallucinated_arg_count=hallucinated_arg_count,
+        predicted_arg_count=predicted_arg_count,
     )
 
 
@@ -224,51 +272,66 @@ class BenchmarkMetrics:
     hallucinated_tool_name_rate: float
     hallucinated_argument_rate: float
     missing_required_argument_rate: float
+    code_correctness_rate: float
 
     def as_dict(self) -> dict:
         return dataclasses.asdict(self)
 
 
 def _compute_metrics(results: list[CaseResult]) -> BenchmarkMetrics:
-    tool_call_cases = [r for r in results if r.expects_tool_call]
-    no_call_cases = [r for r in results if not r.expects_tool_call]
+    # code_correctness cases are scored entirely separately (sandboxed exec,
+    # not tool-call/plain-chat heuristics) -- excluded from every metric
+    # below except the dedicated code_correctness_rate.
+    tc = [r for r in results if not r.is_code]
+    code_results = [r for r in results if r.is_code]
 
-    call_tp = sum(r.call_tp for r in results)
-    call_fp = sum(r.call_fp for r in results)
-    call_fn = sum(r.call_fn for r in results)
+    tool_call_cases = [r for r in tc if r.expects_tool_call]
+    no_call_cases = [r for r in tc if not r.expects_tool_call]
 
-    arg_name_tp = sum(r.arg_name_tp for r in results)
-    arg_name_fp = sum(r.arg_name_fp for r in results)
-    arg_name_fn = sum(r.arg_name_fn for r in results)
-    arg_value_correct = sum(r.arg_value_correct for r in results)
-    required_total = sum(r.required_total for r in results)
-    required_present = sum(r.required_present for r in results)
-    hallucinated_arg_count = sum(r.hallucinated_arg_count for r in results)
-    predicted_arg_count = sum(r.predicted_arg_count for r in results)
+    call_tp = sum(r.call_tp for r in tc)
+    call_fp = sum(r.call_fp for r in tc)
+    call_fn = sum(r.call_fn for r in tc)
 
-    schema_valid = sum(r.schema_valid_calls for r in results)
-    schema_invalid = sum(r.schema_invalid_calls for r in results)
-    hallucinated_tool_names = sum(r.hallucinated_tool_names for r in results)
-    total_predicted_calls = sum(r.predicted_call_count for r in results)
+    arg_name_tp = sum(r.arg_name_tp for r in tc)
+    arg_name_fp = sum(r.arg_name_fp for r in tc)
+    arg_name_fn = sum(r.arg_name_fn for r in tc)
+    arg_value_correct = sum(r.arg_value_correct for r in tc)
+    required_total = sum(r.required_total for r in tc)
+    required_present = sum(r.required_present for r in tc)
+    hallucinated_arg_count = sum(r.hallucinated_arg_count for r in tc)
+    predicted_arg_count = sum(r.predicted_arg_count for r in tc)
+
+    schema_valid = sum(r.schema_valid_calls for r in tc)
+    schema_invalid = sum(r.schema_invalid_calls for r in tc)
+    hallucinated_tool_names = sum(r.hallucinated_tool_names for r in tc)
+    total_predicted_calls = sum(r.predicted_call_count for r in tc)
 
     plain_chat_results = [r.plain_chat_passed for r in no_call_cases if r.plain_chat_passed is not None]
+    code_correctness_results = [
+        r.code_correctness_passed for r in code_results if r.code_correctness_passed is not None
+    ]
 
     return BenchmarkMetrics(
         n_cases=len(results),
-        tool_selection_accuracy=_safe_div(sum(r.tool_selection_correct for r in results), len(results)),
+        tool_selection_accuracy=_safe_div(sum(r.tool_selection_correct for r in tc), len(tc)),
         tool_call_precision=_safe_div(call_tp, call_tp + call_fp),
         tool_call_recall=_safe_div(call_tp, call_tp + call_fn),
         false_positive_tool_rate=_safe_div(sum(r.false_positive_tool for r in no_call_cases), len(no_call_cases), 0.0),
-        false_negative_tool_rate=_safe_div(sum(r.false_negative_tool for r in tool_call_cases), len(tool_call_cases), 0.0),
+        false_negative_tool_rate=_safe_div(
+            sum(r.false_negative_tool for r in tool_call_cases), len(tool_call_cases), 0.0
+        ),
         argument_name_accuracy=_safe_div(2 * arg_name_tp, 2 * arg_name_tp + arg_name_fp + arg_name_fn),
         argument_value_accuracy=_safe_div(arg_value_correct, arg_name_tp),
         required_argument_accuracy=_safe_div(required_present, required_total),
         schema_validity_rate=_safe_div(schema_valid, schema_valid + schema_invalid),
-        exact_tool_call_match=_safe_div(sum(r.exact_match for r in results), len(results)),
+        exact_tool_call_match=_safe_div(sum(r.exact_match for r in tc), len(tc)),
         plain_chat_pass_rate=_safe_div(sum(bool(p) for p in plain_chat_results), len(plain_chat_results)),
         hallucinated_tool_name_rate=_safe_div(hallucinated_tool_names, total_predicted_calls, 0.0),
         hallucinated_argument_rate=_safe_div(hallucinated_arg_count, predicted_arg_count, 0.0),
         missing_required_argument_rate=_safe_div(required_total - required_present, required_total, 0.0),
+        code_correctness_rate=_safe_div(
+            sum(bool(p) for p in code_correctness_results), len(code_correctness_results), 1.0
+        ),
     )
 
 

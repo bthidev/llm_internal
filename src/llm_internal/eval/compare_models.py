@@ -6,6 +6,7 @@ fine-tuning helped tool-calling without silently degrading plain chat.
 
 `compare_reports` is pure (takes two already-computed BenchmarkReports);
 `main` wires it to two real model loads via eval/generation.py."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -22,13 +23,23 @@ from llm_internal.eval.metrics import BenchmarkMetrics, BenchmarkReport, score_b
 # metrics where a smaller value is better (an increase is a regression).
 # Mirrors eval/gates.py's per-metric direction.
 _HIGHER_IS_BETTER = {
-    "tool_selection_accuracy", "tool_call_precision", "tool_call_recall",
-    "argument_name_accuracy", "argument_value_accuracy", "required_argument_accuracy",
-    "schema_validity_rate", "exact_tool_call_match", "plain_chat_pass_rate",
+    "tool_selection_accuracy",
+    "tool_call_precision",
+    "tool_call_recall",
+    "argument_name_accuracy",
+    "argument_value_accuracy",
+    "required_argument_accuracy",
+    "schema_validity_rate",
+    "exact_tool_call_match",
+    "plain_chat_pass_rate",
+    "code_correctness_rate",
 }
 _LOWER_IS_BETTER = {
-    "false_positive_tool_rate", "false_negative_tool_rate",
-    "hallucinated_tool_name_rate", "hallucinated_argument_rate", "missing_required_argument_rate",
+    "false_positive_tool_rate",
+    "false_negative_tool_rate",
+    "hallucinated_tool_name_rate",
+    "hallucinated_argument_rate",
+    "missing_required_argument_rate",
 }
 
 # A delta smaller than this is noise at the benchmark's current size, not a
@@ -68,8 +79,12 @@ def _compare_metric(name: str, base_value: float, ft_value: float) -> MetricComp
         regression = delta > _REGRESSION_EPSILON
         improvement = delta < -_REGRESSION_EPSILON
     return MetricComparison(
-        metric=name, base=base_value, fine_tuned=ft_value, delta=delta,
-        regression=regression, improvement=improvement,
+        metric=name,
+        base=base_value,
+        fine_tuned=ft_value,
+        delta=delta,
+        regression=regression,
+        improvement=improvement,
     )
 
 
@@ -81,11 +96,15 @@ def compare_metrics(base: BenchmarkMetrics, fine_tuned: BenchmarkMetrics) -> lis
     return sorted(compared, key=lambda c: c.metric)
 
 
-def compare_reports(base_report: BenchmarkReport, fine_tuned_report: BenchmarkReport, gate_overrides: dict[str, float] | None = None) -> ComparisonReport:
+def compare_reports(
+    base_report: BenchmarkReport, fine_tuned_report: BenchmarkReport, gate_overrides: dict[str, float] | None = None
+) -> ComparisonReport:
     comparisons = compare_metrics(base_report.overall, fine_tuned_report.overall)
     gates = apply_overrides(DEFAULT_GATES, gate_overrides or {})
     return ComparisonReport(
-        base=base_report, fine_tuned=fine_tuned_report, metric_comparisons=comparisons,
+        base=base_report,
+        fine_tuned=fine_tuned_report,
+        metric_comparisons=comparisons,
         regressions=[c.metric for c in comparisons if c.regression],
         improvements=[c.metric for c in comparisons if c.improvement],
         base_gates_passed=gates_passed(evaluate_gates(base_report.overall, gates)),
@@ -129,8 +148,7 @@ def main() -> None:
     """
     if len(sys.argv) != 3:
         print(
-            "usage: python -m llm_internal.eval.compare_models "
-            "<base_model_config.yaml> <fine_tuned_config.yaml>",
+            "usage: python -m llm_internal.eval.compare_models <base_model_config.yaml> <fine_tuned_config.yaml>",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -144,11 +162,17 @@ def main() -> None:
         raise ValueError("base and fine-tuned configs must point at the exact same benchmark cases")
 
     base_predictions = generate_for_messages(
-        [c.messages for c in base_cases], base_cfg.backend, base_cfg.model_dir, base_cfg.max_new_tokens,
+        [c.messages for c in base_cases],
+        base_cfg.backend,
+        base_cfg.model_dir,
+        base_cfg.max_new_tokens,
         base_cfg.model_revision,
     )
     ft_predictions = generate_for_messages(
-        [c.messages for c in ft_cases], ft_cfg.backend, ft_cfg.model_dir, ft_cfg.max_new_tokens,
+        [c.messages for c in ft_cases],
+        ft_cfg.backend,
+        ft_cfg.model_dir,
+        ft_cfg.max_new_tokens,
         ft_cfg.model_revision,
     )
 

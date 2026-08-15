@@ -26,12 +26,19 @@ Defaults (rationale):
   costly, but harder to fully eliminate than over-triggering (looser bar).
 - hallucinated_tool_name_rate <= 0.05 -- inventing tools that don't exist
   is a severe, easily-detected failure mode.
+- code_correctness_rate: advisory only (mandatory=False), not a default
+  gate value below -- the code-generation cases are new and untuned
+  (small n, sandboxed-exec pass/fail is stricter than the argument-level
+  metrics above), so it's reported but doesn't block CI until it's been
+  observed on real runs. Set an explicit threshold via `gate_overrides`
+  once it has.
 
 Override any threshold via `BenchmarkEvalConfig.gate_overrides` in
 `configs/benchmark_eval.yaml` (a flat `{metric_name: threshold}` map);
 direction and mandatory-ness are fixed per metric to keep gate semantics
 unambiguous.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -66,6 +73,7 @@ DEFAULT_GATES: tuple[GateSpec, ...] = (
     GateSpec("argument_name_accuracy", HIGHER_IS_BETTER, 0.85, mandatory=False),
     GateSpec("argument_value_accuracy", HIGHER_IS_BETTER, 0.70, mandatory=False),
     GateSpec("hallucinated_argument_rate", LOWER_IS_BETTER, 0.10, mandatory=False),
+    GateSpec("code_correctness_rate", HIGHER_IS_BETTER, 0.0, mandatory=False),
 )
 
 
@@ -77,10 +85,7 @@ def apply_overrides(gates: tuple[GateSpec, ...], overrides: dict[str, float]) ->
     unknown = set(overrides) - known
     if unknown:
         raise ValueError(f"gate_overrides names unknown metrics: {sorted(unknown)}")
-    return tuple(
-        dataclasses.replace(g, threshold=overrides[g.metric]) if g.metric in overrides else g
-        for g in gates
-    )
+    return tuple(dataclasses.replace(g, threshold=overrides[g.metric]) if g.metric in overrides else g for g in gates)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -101,10 +106,16 @@ def evaluate_gates(metrics: BenchmarkMetrics, gates: tuple[GateSpec, ...] = DEFA
             raise ValueError(f"unknown metric {gate.metric!r} in gate spec (not a BenchmarkMetrics field)")
         value = values[gate.metric]
         passed = value >= gate.threshold if gate.direction == HIGHER_IS_BETTER else value <= gate.threshold
-        results.append(GateResult(
-            metric=gate.metric, value=value, threshold=gate.threshold,
-            direction=gate.direction, mandatory=gate.mandatory, passed=passed,
-        ))
+        results.append(
+            GateResult(
+                metric=gate.metric,
+                value=value,
+                threshold=gate.threshold,
+                direction=gate.direction,
+                mandatory=gate.mandatory,
+                passed=passed,
+            )
+        )
     return results
 
 
