@@ -1,10 +1,23 @@
-"""Base-model vs. fine-tuned-model comparison on the independent benchmark."""
+"""Base-model vs. fine-tuned-model comparison on the independent benchmark.
+
+Runs the exact same benchmark cases through both models and reports, per
+metric: base value, fine-tuned value, absolute delta, and whether the
+change is a regression or an improvement. Metric direction is derived from
+`eval.gates.METRIC_DIRECTIONS`, so gate semantics and regression semantics
+cannot silently diverge when a metric is added or changed.
+
+`compare_reports` is pure (takes two already-computed BenchmarkReports);
+`main` wires it to two real model loads via eval/generation.py and writes the
+comparison report to the configured fine-tuned `comparison_report_path`,
+creating parent directories automatically.
+"""
 
 from __future__ import annotations
 
 import dataclasses
 import json
 import sys
+from pathlib import Path
 
 from llm_internal.eval.benchmark import load_benchmark
 from llm_internal.eval.config import load_benchmark_eval_config
@@ -19,6 +32,8 @@ from llm_internal.eval.gates import (
 from llm_internal.eval.generation import generate_for_messages
 from llm_internal.eval.metrics import BenchmarkMetrics, BenchmarkReport, score_benchmark
 
+# Deltas smaller than this are treated as benchmark noise rather than a
+# meaningful improvement/regression at the benchmark's current size.
 _REGRESSION_EPSILON = 0.01
 
 
@@ -44,6 +59,7 @@ class ComparisonReport:
 
 
 def _compare_metric(name: str, base_value: float, ft_value: float) -> MetricComparison:
+    """Compare one metric according to its registered optimization direction."""
     delta = ft_value - base_value
     direction = METRIC_DIRECTIONS[name]
     if direction == HIGHER_IS_BETTER:
@@ -52,17 +68,11 @@ def _compare_metric(name: str, base_value: float, ft_value: float) -> MetricComp
     else:
         regression = delta > _REGRESSION_EPSILON
         improvement = delta < -_REGRESSION_EPSILON
-    return MetricComparison(
-        metric=name,
-        base=base_value,
-        fine_tuned=ft_value,
-        delta=delta,
-        regression=regression,
-        improvement=improvement,
-    )
+    return MetricComparison(name, base_value, ft_value, delta, regression, improvement)
 
 
 def compare_metrics(base: BenchmarkMetrics, fine_tuned: BenchmarkMetrics) -> list[MetricComparison]:
+    """Compare every registered benchmark quality metric, excluding `n_cases`."""
     base_dict, ft_dict = base.as_dict(), fine_tuned.as_dict()
     return sorted(
         (_compare_metric(name, base_dict[name], ft_dict[name]) for name in METRIC_DIRECTIONS),
@@ -75,6 +85,7 @@ def compare_reports(
     fine_tuned_report: BenchmarkReport,
     gate_overrides: dict[str, float] | None = None,
 ) -> ComparisonReport:
+    """Pure comparison of two reports plus mandatory-gate verdicts."""
     comparisons = compare_metrics(base_report.overall, fine_tuned_report.overall)
     gates = apply_overrides(DEFAULT_GATES, gate_overrides or {})
     return ComparisonReport(
@@ -116,7 +127,26 @@ def comparison_to_json(report: ComparisonReport) -> dict:
     }
 
 
+def _write_report(path: str, payload: dict) -> Path:
+    """Write a JSON report, creating any configured parent directory."""
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return out_path
+
+
 def main() -> None:
+    """Compare a pinned base-model config against a fine-tuned model config.
+
+    Usage::
+
+        python -m llm_internal.eval.compare_models \
+            configs/benchmark_eval_base.yaml configs/benchmark_eval.yaml
+
+    Both configs must resolve to the exact same ordered benchmark case IDs.
+    The process exits non-zero if the fine-tuned model fails a mandatory gate
+    or regresses by more than `_REGRESSION_EPSILON` on any registered metric.
+    """
     if len(sys.argv) != 3:
         print(
             "usage: python -m llm_internal.eval.compare_models <base_model_config.yaml> <fine_tuned_config.yaml>",
@@ -126,7 +156,6 @@ def main() -> None:
 
     base_cfg = load_benchmark_eval_config(sys.argv[1])
     ft_cfg = load_benchmark_eval_config(sys.argv[2])
-
     base_cases = load_benchmark(base_cfg.benchmark_files)
     ft_cases = load_benchmark(ft_cfg.benchmark_files)
     if [case.id for case in base_cases] != [case.id for case in ft_cases]:
@@ -152,9 +181,7 @@ def main() -> None:
     comparison = compare_reports(base_report, ft_report, ft_cfg.gate_overrides)
     print(format_comparison(comparison))
 
-    out_path = "comparison_report.json"
-    with open(out_path, "w", encoding="utf-8") as handle:
-        json.dump(comparison_to_json(comparison), handle, indent=2)
+    out_path = _write_report(ft_cfg.comparison_report_path, comparison_to_json(comparison))
     print(f"\nwrote {out_path}")
     sys.exit(0 if comparison.fine_tuned_gates_passed and not comparison.regressions else 1)
 

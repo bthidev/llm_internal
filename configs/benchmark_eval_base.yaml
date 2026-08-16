@@ -14,3 +14,7 @@ min_plain_chat_chars: 5
 backend: cuda
 seed: 42
 gate_overrides: {}
+# Keep standalone base-model benchmark artifacts separate from the fine-tuned
+# benchmark outputs so orchestrated runs cannot silently overwrite each other.
+report_path: artifacts/benchmark_report_base.json
+comparison_report_path: artifacts/comparison_report_base.json

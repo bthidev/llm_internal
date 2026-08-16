@@ -7,13 +7,16 @@ every prompt here is hand-authored and independent from the training data
 
 `run_benchmark` is pure given `predictions` (no model/GPU); `main` wires it
 to a real model load + generation via eval/generation.py, dispatched on
-BenchmarkEvalConfig.backend."""
+BenchmarkEvalConfig.backend. Report output is written to the configured
+`report_path`; parent directories are created automatically.
+"""
 
 from __future__ import annotations
 
 import dataclasses
 import json
 import sys
+from pathlib import Path
 
 from llm_internal.eval.benchmark import BenchmarkCase, load_benchmark
 from llm_internal.eval.config import BenchmarkEvalConfig, load_benchmark_eval_config
@@ -27,20 +30,24 @@ def run_benchmark(
     predictions: list[str],
     cfg: BenchmarkEvalConfig,
 ) -> tuple[BenchmarkReport, list[GateResult]]:
-    """Pure: scores `predictions` against `cases` and evaluates the
-    configured quality gates. No model/GPU involved."""
+    """Pure: score predictions and evaluate configured quality gates.
+
+    No model/GPU work happens here, which keeps this path unit-testable and
+    allows CI to validate benchmark/gate behavior independently of hardware.
+    """
     report = score_benchmark(cases, predictions, cfg.min_plain_chat_chars)
     gates = apply_overrides(DEFAULT_GATES, cfg.gate_overrides)
-    gate_results = evaluate_gates(report.overall, gates)
-    return report, gate_results
+    return report, evaluate_gates(report.overall, gates)
 
 
 def generate_benchmark_predictions(cases: list[BenchmarkCase], cfg: BenchmarkEvalConfig) -> list[str]:
-    """GPU/Metal-only: loads cfg.model_dir and generates a reply for each
-    case's `messages` (already the full prompt -- no trailing turn to
-    drop, unlike the Hermes split)."""
+    """GPU/Metal-only: generate one reply for each benchmark case.
+
+    `case.messages` is already the complete prompt under test, unlike the
+    held-out Hermes evaluation where a trailing target turn must be removed.
+    """
     return generate_for_messages(
-        [c.messages for c in cases],
+        [case.messages for case in cases],
         cfg.backend,
         cfg.model_dir,
         cfg.max_new_tokens,
@@ -50,10 +57,9 @@ def generate_benchmark_predictions(cases: list[BenchmarkCase], cfg: BenchmarkEva
 
 def format_report(report: BenchmarkReport, gate_results: list[GateResult]) -> str:
     lines = ["=== overall ==="]
-    for k, v in report.overall.as_dict().items():
-        lines.append(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}")
-    lines.append("")
-    lines.append("=== by category ===")
+    for key, value in report.overall.as_dict().items():
+        lines.append(f"{key}={value:.3f}" if isinstance(value, float) else f"{key}={value}")
+    lines.extend(["", "=== by category ==="])
     for category, metrics in report.by_category.items():
         lines.append(
             f"{category}: n={metrics.n_cases} "
@@ -62,38 +68,43 @@ def format_report(report: BenchmarkReport, gate_results: list[GateResult]) -> st
             f"plain_chat_pass_rate={metrics.plain_chat_pass_rate:.3f} "
             f"code_correctness_rate={metrics.code_correctness_rate:.3f}"
         )
-    lines.append("")
-    lines.append("=== gates ===")
-    for g in gate_results:
-        kind = "mandatory" if g.mandatory else "advisory"
-        status = "PASS" if g.passed else "FAIL"
-        lines.append(f"[{status}] ({kind}) {g.metric}={g.value:.3f} vs threshold {g.threshold} ({g.direction})")
+    lines.extend(["", "=== gates ==="])
+    for gate in gate_results:
+        kind = "mandatory" if gate.mandatory else "advisory"
+        status = "PASS" if gate.passed else "FAIL"
+        lines.append(
+            f"[{status}] ({kind}) {gate.metric}={gate.value:.3f} "
+            f"vs threshold {gate.threshold} ({gate.direction})"
+        )
     return "\n".join(lines)
 
 
 def report_to_json(report: BenchmarkReport, gate_results: list[GateResult]) -> dict:
     return {
         "overall": report.overall.as_dict(),
-        "by_category": {k: v.as_dict() for k, v in report.by_category.items()},
-        "gates": [dataclasses.asdict(g) for g in gate_results],
+        "by_category": {key: value.as_dict() for key, value in report.by_category.items()},
+        "gates": [dataclasses.asdict(gate) for gate in gate_results],
         "passed": gates_passed(gate_results),
     }
+
+
+def _write_report(path: str, payload: dict) -> Path:
+    """Write a JSON report, creating any configured parent directory."""
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return out_path
 
 
 def main() -> None:
     cfg = load_benchmark_eval_config("configs/benchmark_eval.yaml")
     cases = load_benchmark(cfg.benchmark_files)
-
     predictions = generate_benchmark_predictions(cases, cfg)
     report, gate_results = run_benchmark(cases, predictions, cfg)
 
     print(format_report(report, gate_results))
-
-    out_path = "benchmark_report.json"
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(report_to_json(report, gate_results), f, indent=2)
+    out_path = _write_report(cfg.report_path, report_to_json(report, gate_results))
     print(f"\nwrote {out_path}")
-
     sys.exit(0 if gates_passed(gate_results) else 1)
 
 
