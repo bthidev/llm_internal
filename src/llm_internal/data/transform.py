@@ -31,6 +31,8 @@ _HERMES_TOOL_SYSTEM_PREFIX = (
 
 _GLAIVE_FUNCTIONS_MARKER = "Use them if required -"
 _GLAIVE_TURN_RE = re.compile(r"(USER|ASSISTANT|FUNCTION RESPONSE): ")
+# `arguments` is sometimes a Python-repr-style single-quoted JSON *string* and
+# sometimes already a raw JSON object -- see `_parse_glaive_functioncall`.
 _GLAIVE_FUNCTIONCALL_QUOTED_ARGS_RE = re.compile(
     r"""^<functioncall>\s*\{"name":\s*"([^"]+)",\s*"arguments":\s*'(.*)'\}\s*$""",
     re.DOTALL,
@@ -38,6 +40,12 @@ _GLAIVE_FUNCTIONCALL_QUOTED_ARGS_RE = re.compile(
 
 
 def format_example(raw: dict) -> dict:
+    """Convert one raw hermes-function-calling-v1 example (`{"id", "conversations"}`,
+    each conversation turn `{"from", "value"}`) into `{"id", "messages", "category"}`
+    where `messages` is a list of `{"role", "content"}` dicts using Qwen3 chat-template
+    role names, and `category` is `"tool_call"` if any assistant turn contains a
+    `<tool_call>` block, else `"plain_chat"`.
+    """
     messages = []
     for turn in raw["conversations"]:
         role = ROLE_MAP.get(turn["from"])
@@ -50,10 +58,17 @@ def format_example(raw: dict) -> dict:
         if any(m["role"] == "assistant" and "<tool_call>" in m["content"] for m in messages)
         else "plain_chat"
     )
+
     return {"id": raw.get("id"), "messages": messages, "category": category}
 
 
 def format_code_example(raw: dict, source: str, index: int) -> dict:
+    """Convert one raw flat instruction-tuning example (`{"instruction", "output"}`,
+    optionally `{"input"}` -- Evol-Instruct-Code-80k-v1 / CodeAlpaca-20k shape)
+    into the same `{"id", "messages", "category"}` shape as `format_example`.
+    Always `"plain_chat"`: these sources carry no tool-call targets. `id` is
+    synthesized from `source` + `index` since neither dataset has a natural id.
+    """
     extra_input = raw.get("input") or ""
     user_content = raw["instruction"] if not extra_input else f"{raw['instruction']}\n\n{extra_input}"
     messages = [
@@ -65,6 +80,10 @@ def format_code_example(raw: dict, source: str, index: int) -> dict:
 
 
 def _extract_glaive_tools(system_body: str) -> list[dict]:
+    """Pull the (possibly multiple, back-to-back) JSON function-schema objects
+    out of a glaive-function-calling-v2 `system` field. Returns `[]` when the
+    row has no tools (e.g. "you have no access to external functions").
+    """
     marker_idx = system_body.find(_GLAIVE_FUNCTIONS_MARKER)
     if marker_idx == -1:
         return []
@@ -88,6 +107,12 @@ def _extract_glaive_tools(system_body: str) -> list[dict]:
 
 
 def _parse_glaive_functioncall(content: str) -> dict | None:
+    """Parse a `<functioncall> {...}</functioncall>`-delimited payload into
+    `{"name", "arguments"}`. glaive-function-calling-v2 emits two shapes for
+    the same field: `"arguments"` as a Python-repr-style single-quoted JSON
+    *string* (most rows), or already a raw JSON object (some rows, notably
+    empty-argument calls). Returns `None` if neither shape parses.
+    """
     body = content.removeprefix("<functioncall>").strip()
     try:
         payload = json.loads(body)
@@ -110,16 +135,23 @@ def _parse_glaive_functioncall(content: str) -> dict | None:
 
 
 def _parse_glaive_chat(chat_text: str) -> list[dict] | None:
+    """Parse a glaive-function-calling-v2 `chat` blob (`"USER: ...\\n\\n\\nASSISTANT:
+    ..."`) into `{"role", "content"}` messages, rewriting `<functioncall>
+    {"name": ..., "arguments": '...'}` into Hermes-style `<tool_call>` JSON and
+    `FUNCTION RESPONSE:` turns into `<tool_response>` JSON. Returns `None` when
+    a turn doesn't match the expected shape (dropped by the caller) rather than
+    risk emitting a corrupted training target.
+    """
     matches = list(_GLAIVE_TURN_RE.finditer(chat_text))
     if not matches:
         return None
 
     messages: list[dict] = []
     last_function_name: str | None = None
-    for i, match in enumerate(matches):
-        role_label = match.group(1)
+    for i, m in enumerate(matches):
+        role_label = m.group(1)
         end = matches[i + 1].start() if i + 1 < len(matches) else len(chat_text)
-        content = chat_text[match.end() : end].strip()
+        content = chat_text[m.end() : end].strip()
 
         if role_label == "USER":
             messages.append({"role": "user", "content": content})
@@ -142,6 +174,7 @@ def _parse_glaive_chat(chat_text: str) -> list[dict] | None:
             )
             continue
 
+        # FUNCTION RESPONSE
         if last_function_name is None:
             return None
         try:
@@ -160,13 +193,18 @@ def _parse_glaive_chat(chat_text: str) -> list[dict] | None:
 
 
 def format_glaive_example(raw: dict, source: str, index: int) -> dict | None:
+    """Convert one raw glaive-function-calling-v2 example (`{"system", "chat"}`
+    free-text fields) into the same `{"id", "messages", "category"}` shape as
+    `format_example`. Returns `None` when the row doesn't parse cleanly (caller
+    drops it) instead of emitting a malformed training target.
+    """
     system_body = re.sub(r"^SYSTEM:\s*", "", raw.get("system") or "")
     tool_defs = _extract_glaive_tools(system_body)
     if tool_defs:
         system_content = (
             _HERMES_TOOL_SYSTEM_PREFIX
             + "\n<tools>\n"
-            + json.dumps([{"type": "function", "function": tool} for tool in tool_defs])
+            + json.dumps([{"type": "function", "function": t} for t in tool_defs])
             + "\n</tools>"
         )
     else:
@@ -186,6 +224,12 @@ def format_glaive_example(raw: dict, source: str, index: int) -> dict | None:
 
 
 def dedupe_examples(examples: list[dict]) -> list[dict]:
+    """Drop examples whose `messages` content exactly duplicates an earlier
+    example's, keeping the first occurrence. Source files (e.g.
+    `func-calling.json` and `func-calling-singleturn.json`) share verbatim
+    examples under different `id`s; letting duplicates survive lets the same
+    conversation land in both `train` and `eval`, leaking eval signal.
+    """
     seen: set[str] = set()
     result = []
     for ex in examples:
@@ -215,7 +259,20 @@ def _is_valid_json(raw: str) -> bool:
 
 
 def filter_malformed_tool_calls(examples: list[dict]) -> list[dict]:
-    """Drop tool-call examples containing malformed JSON protocol blocks."""
+    """Drop `tool_call`-category examples where any `<tool_call>` block in
+    the conversation doesn't parse as valid JSON (`plain_chat` examples are
+    unaffected). ~6.7% of raw hermes-function-calling-v1 tool_call blocks
+    are corrupted this way -- concretely, a literal (non-newline) `\\n`
+    text sequence immediately after `<tool_call>`, or Python-repr-style
+    single-quoted values instead of JSON double quotes, concentrated in
+    `func-calling.json`/`func-calling-singleturn.json`. Training on these
+    teaches the model to reproduce the corruption verbatim (confirmed: a
+    fine-tuned checkpoint's malformed-JSON eval failures matched the
+    eval split's own malformed-ground-truth count exactly). Keeping them
+    in eval also makes those examples unwinnable by construction, since
+    the ground truth itself doesn't parse -- pure noise in the accuracy
+    denominator either way.
+    """
     return [ex for ex in examples if ex["category"] != "tool_call" or _tool_calls_are_well_formed(ex["messages"])]
 
 
@@ -226,6 +283,10 @@ def stratified_split(
     eval_ratio: float,
     seed: int,
 ) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split `examples` (each with a `"category"` key) into train/val/eval lists,
+    preserving each category's proportions in every split. Deterministic for a
+    given `seed`.
+    """
     if abs((train_ratio + val_ratio + eval_ratio) - 1.0) > 1e-9:
         raise ValueError(
             f"train_ratio + val_ratio + eval_ratio must equal 1.0, got {train_ratio} + {val_ratio} + {eval_ratio}"
