@@ -28,10 +28,20 @@ def load_cuda_model(model_dir: str, revision: str | None = None) -> tuple[Any, A
 
 
 def generate_cuda(prompts: list[str], model: Any, tokenizer: Any, max_new_tokens: int) -> list[str]:
+    """Generate deterministically with transformers.
+
+    `do_sample=False` is explicit rather than relying on the library default:
+    benchmark reproducibility must not silently change across transformers
+    upgrades.
+    """
     predictions = []
     for text in prompts:
         inputs = tokenizer(text, return_tensors="pt").to(model.device)
-        output_ids = model.generate(**inputs, max_new_tokens=max_new_tokens)
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+        )
         new_tokens = output_ids[0][inputs["input_ids"].shape[1]:]
         predictions.append(tokenizer.decode(new_tokens, skip_special_tokens=True))
     return predictions
@@ -54,13 +64,9 @@ def generate_for_messages(
     revision: str | None = None,
 ) -> list[str]:
     """Dispatch to the CUDA (transformers) or MLX generation path based on
-    `backend`, rendering each `messages` entry (already the full prompt --
-    callers drop any trailing target turn before calling this) through the
-    chat template and greedily generating a reply. `revision` pins a
-    Hugging Face repo revision (relevant for `model_dir`s that are hub
-    repo ids, e.g. the base model in a base-vs-fine-tuned comparison --
-    see configs/train.yaml's base_model_revision); ignored for local
-    checkpoint/export directories."""
+    `backend`, rendering each `messages` entry through the chat template and
+    greedily generating a reply. `revision` pins a Hugging Face repo revision
+    when `model_dir` is a Hub model id."""
     if backend == "mlx":
         model, tokenizer = load_mlx_model(model_dir, revision)
         prompts = [render_prompt(m, tokenizer) for m in messages_list]

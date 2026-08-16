@@ -12,12 +12,16 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def render_modelfile(gguf_filename: str, system_prompt: str = DEFAULT_SYSTEM_PROMPT) -> str:
+    """Render deterministic deployment defaults matching benchmark decoding.
+
+    Tool-calling quality gates are measured with greedy decoding; using
+    temperature sampling in the generated Ollama Modelfile would otherwise
+    introduce an eval-vs-production behavior gap.
+    """
     return (
         f"FROM ./{gguf_filename}\n"
         f'SYSTEM """{system_prompt}"""\n'
-        "PARAMETER temperature 0.7\n"
-        "PARAMETER top_p 0.8\n"
-        "PARAMETER top_k 20\n"
+        "PARAMETER temperature 0\n"
     )
 
 
