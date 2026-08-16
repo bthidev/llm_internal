@@ -6,8 +6,19 @@ capabilities, no-new-privileges, and CPU/memory/PID limits. If no supported
 container runtime is available the scorer fails closed instead of executing
 untrusted model output on the host.
 
+The default container backend deliberately uses ``--pull=never`` so benchmark
+execution never performs an implicit network pull. Pre-pull
+``python:3.11-alpine`` (or the image selected by
+``LLM_INTERNAL_CODE_EXEC_IMAGE``) before running code-correctness cases. A
+missing runtime returns ``sandbox_unavailable``; a missing local image returns
+``sandbox_image_unavailable``. Both are infrastructure failures, not evidence
+that the generated code itself was incorrect.
+
 Set ``LLM_INTERNAL_CODE_EXEC_BACKEND=unsafe-subprocess`` only for explicitly
-trusted/local benchmark data when container isolation is unavailable.
+trusted/local benchmark data when container isolation is unavailable. Model
+output is still arbitrary code, so this backend must not be enabled merely to
+work around a missing container runtime on a host that carries secrets or
+other valuable state.
 """
 
 from __future__ import annotations
@@ -33,6 +44,7 @@ class CodeExecResult:
 
 
 def extract_code(predicted_text: str) -> str | None:
+    """Extract the first Python fenced block, falling back to bare reply text."""
     match = _CODE_FENCE_RE.search(predicted_text)
     if match:
         return match.group(1)
@@ -129,8 +141,14 @@ def run_code_case(
     """Execute generated code and tests in an isolated container by default.
 
     ``backend`` accepts ``container`` (default) or ``unsafe-subprocess``.
+    The container backend requires Docker/Podman plus a locally available
+    image (default ``python:3.11-alpine``); it never pulls automatically.
+    Missing infrastructure is reported as ``sandbox_unavailable`` or
+    ``sandbox_image_unavailable`` and fails closed.
+
     The unsafe backend is intentionally explicit and should only be used
-    with trusted generated code in constrained development environments.
+    when executing code that is genuinely trusted in a constrained,
+    disposable environment.
     """
     code = extract_code(predicted_text)
     if code is None:
