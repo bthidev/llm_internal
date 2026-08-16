@@ -11,7 +11,11 @@ def summarize_tool_call_failures(
     examples: list[dict], predictions: list[str], max_samples: int = 5,
 ) -> str:
     """Human-readable diagnostic report for a failed/low tool_call_accuracy
-    run: aggregate signal plus a handful of expected-vs-predicted samples.
+    run: aggregate signal (how many predictions contain no <tool_call> block
+    at all, vs. malformed JSON, vs. well-formed-but-wrong) plus a handful of
+    expected-vs-predicted samples. Printed to stdout at eval time (not part
+    of the pass/fail gate itself) so a failing run's Kaggle log carries
+    enough signal to diagnose without re-downloading the checkpoint.
     """
     lines = ["--- tool_call diagnostic samples ---"]
     no_call = 0
@@ -68,12 +72,19 @@ def _last_expected_tool_call(expected_messages: list[dict]) -> dict | None:
 
 
 def prompt_messages_for_example(example: dict) -> list[dict]:
-    """Messages to render so generation starts immediately before the target.
+    """Messages to render (with a generation prompt appended) so the model's
+    continuation is comparable to what's actually scored.
 
-    Tool-call examples may continue past the scored tool call with a tool
-    response and final assistant summary, so truncate before the last
-    tool-calling assistant turn. Plain-chat examples keep the existing
-    behavior of dropping the final target turn.
+    For `plain_chat`, that's everything but the final assistant turn, as
+    before. For `tool_call`, the raw hermes-function-calling-v1 data often
+    continues *past* the scored tool call -- e.g. system/user/.../
+    assistant(<tool_call>)/tool(response)/assistant(final NL summary).
+    Dropping only the last message would then prompt the model to continue
+    *after* the tool call already happened (correctly producing a plain NL
+    summary), while scoring compares that summary against the tool call
+    itself -- a guaranteed mismatch. Truncate instead to end right before
+    the same tool-calling turn `_last_expected_tool_call` scores against,
+    so the model is actually asked to produce it.
     """
     messages = example["messages"]
     if example["category"] == "tool_call":
@@ -84,6 +95,8 @@ def prompt_messages_for_example(example: dict) -> list[dict]:
 
 
 def score_tool_call_example(expected_messages: list[dict], predicted_text: str) -> dict:
+    """Compare the first tool call in `predicted_text` against the first tool
+    call in the last tool-calling assistant turn of `expected_messages`."""
     expected = _last_expected_tool_call(expected_messages)
     predicted_calls = parse_tool_calls(predicted_text)
     predicted = predicted_calls[0] if predicted_calls else None
