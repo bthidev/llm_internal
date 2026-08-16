@@ -9,6 +9,8 @@ max_new_tokens: 512
 min_plain_chat_chars: 5
 backend: cuda
 seed: 42
+report_path: artifacts/benchmark_report.json
+comparison_report_path: artifacts/comparison_report.json
 # Per-metric threshold overrides layered onto eval/gates.py's DEFAULT_GATES
 # (metric name -> new threshold; direction/mandatory-ness stay fixed).
 # Empty by default -- see README "Quality gates" for the documented
