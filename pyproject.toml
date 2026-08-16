@@ -88,7 +88,7 @@ typeCheckingMode = "basic"
 reportMissingImports = "warning"  # the mlx extra (mlx_lm) is optional and not always installed
 
 [tool.pytest.ini_options]
-addopts = "--cov=llm_internal --cov-report=term-missing"
+addopts = "--cov=llm_internal --cov-report=term-missing --cov-fail-under=85"
 testpaths = ["tests"]
 
 [tool.coverage.run]
