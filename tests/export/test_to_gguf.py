@@ -11,6 +11,14 @@ def test_render_modelfile_references_gguf_file_and_system_prompt():
     assert 'SYSTEM """You are a helpful assistant with tools."""' in content
 
 
+def test_render_modelfile_uses_deterministic_decoding_defaults():
+    content = render_modelfile("model-q4_k_m.gguf")
+
+    assert "PARAMETER temperature 0" in content
+    assert "top_p" not in content
+    assert "top_k" not in content
+
+
 def test_write_modelfile_creates_file_with_content(tmp_path: Path):
     path = tmp_path / "Modelfile"
 
