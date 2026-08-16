@@ -53,9 +53,12 @@ target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint]
+# Default rule set (E/F) plus import sorting (I) and bugbear (B); this is
+# a fine-tuning research repo, not a library -- deliberately not opting
+# into stricter/pedantic rule families (docstrings, annotations, etc.).
 select = ["E", "F", "I", "B", "UP"]
 ignore = [
-    "E501",
+    "E501",  # line length is enforced by the formatter/line-length setting, not worth a hard lint failure
 ]
 
 [tool.ruff.lint.isort]
@@ -66,12 +69,23 @@ include = ["src", "tests"]
 exclude = [
     "**/__pycache__",
     ".venv",
+    # Pre-existing typing debt unrelated to this change: trl's public API
+    # doesn't re-export SFTConfig/SFTTrainer per its type stubs (works
+    # fine at runtime -- see README), and TrainConfig's test fixtures use
+    # an untyped dict-merge pattern pyright can't narrow. GPU-only code,
+    # not covered by the unit test suite either; left alone per "avoid
+    # broad refactors unrelated to this task".
     "src/llm_internal/train",
     "tests/train",
 ]
 pythonVersion = "3.10"
+# "basic" (not "strict"): third-party ML libraries (transformers, unsloth,
+# trl, peft, mlx_lm) ship partial/no type stubs, so strict mode would flag
+# hundreds of reportUnknownMemberType/reportMissingTypeStubs findings on
+# code that is otherwise correct. Basic mode still catches real errors
+# (undefined names, wrong argument types/counts, unreachable code).
 typeCheckingMode = "basic"
-reportMissingImports = "warning"
+reportMissingImports = "warning"  # the mlx extra (mlx_lm) is optional and not always installed
 
 [tool.pytest.ini_options]
 addopts = "--cov=llm_internal --cov-report=term-missing --cov-fail-under=85"
@@ -80,6 +94,8 @@ testpaths = ["tests"]
 [tool.coverage.run]
 source = ["llm_internal"]
 omit = [
+    # GPU/Metal-only code paths (model load/generate/train/export); not
+    # exercised by the unit test suite, see README "Local development".
     "*/train/sft.py",
     "*/train/mlx_backend.py",
     "*/export/to_gguf.py",
