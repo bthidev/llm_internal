@@ -1,4 +1,15 @@
-"""CLI entrypoint for the independent tool-calling benchmark."""
+"""CLI entrypoint for the independent tool-calling benchmark
+(data/benchmark/*.jsonl). Unlike eval/run_eval.py's held-out Hermes split,
+every prompt here is hand-authored and independent from the training data
+(see eval/benchmark.py). Reports per-category and global metrics
+(eval/metrics.py) and exits non-zero if any mandatory quality gate
+(eval/gates.py) fails, so it's CI-safe.
+
+`run_benchmark` is pure given `predictions` (no model/GPU); `main` wires it
+to a real model load + generation via eval/generation.py, dispatched on
+BenchmarkEvalConfig.backend. Report output is written to the configured
+`report_path`; parent directories are created automatically.
+"""
 
 from __future__ import annotations
 
@@ -19,12 +30,22 @@ def run_benchmark(
     predictions: list[str],
     cfg: BenchmarkEvalConfig,
 ) -> tuple[BenchmarkReport, list[GateResult]]:
+    """Pure: score predictions and evaluate configured quality gates.
+
+    No model/GPU work happens here, which keeps this path unit-testable and
+    allows CI to validate benchmark/gate behavior independently of hardware.
+    """
     report = score_benchmark(cases, predictions, cfg.min_plain_chat_chars)
     gates = apply_overrides(DEFAULT_GATES, cfg.gate_overrides)
     return report, evaluate_gates(report.overall, gates)
 
 
 def generate_benchmark_predictions(cases: list[BenchmarkCase], cfg: BenchmarkEvalConfig) -> list[str]:
+    """GPU/Metal-only: generate one reply for each benchmark case.
+
+    `case.messages` is already the complete prompt under test, unlike the
+    held-out Hermes evaluation where a trailing target turn must be removed.
+    """
     return generate_for_messages(
         [case.messages for case in cases],
         cfg.backend,
@@ -68,6 +89,7 @@ def report_to_json(report: BenchmarkReport, gate_results: list[GateResult]) -> d
 
 
 def _write_report(path: str, payload: dict) -> Path:
+    """Write a JSON report, creating any configured parent directory."""
     out_path = Path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
