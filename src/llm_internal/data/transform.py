@@ -7,14 +7,14 @@ import json
 import random
 import re
 
+from llm_internal.tool_protocol import tool_call_blocks
+
 ROLE_MAP = {
     "system": "system",
     "human": "user",
     "gpt": "assistant",
     "tool": "tool",
 }
-
-_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 
 CODE_SYSTEM_PROMPT = (
     "You are an expert software engineer. Write complete, correct, runnable code "
@@ -246,7 +246,7 @@ def _tool_calls_are_well_formed(messages: list[dict]) -> bool:
         _is_valid_json(raw)
         for message in messages
         if message["role"] == "assistant"
-        for raw in _TOOL_CALL_RE.findall(message["content"])
+        for raw in tool_call_blocks(message["content"])
     )
 
 

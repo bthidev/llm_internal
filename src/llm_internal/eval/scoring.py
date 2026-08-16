@@ -3,37 +3,8 @@ takes already-generated prediction text."""
 from __future__ import annotations
 
 import dataclasses
-import json
-import re
 
-_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
-
-
-def parse_tool_calls(text: str) -> list[dict]:
-    """Extract every <tool_call>{json}</tool_call> block from `text`. Blocks
-    that don't parse as JSON are skipped (a malformed model output is a
-    scoring failure, not a crash)."""
-    calls = []
-    for raw in _TOOL_CALL_RE.findall(text):
-        try:
-            calls.append(json.loads(raw))
-        except json.JSONDecodeError:
-            continue
-    return calls
-
-
-def parse_tool_calls_detailed(text: str) -> tuple[list[dict], int]:
-    """Like `parse_tool_calls`, but also reports how many <tool_call> blocks
-    failed to parse as JSON (a structural-validity signal `parse_tool_calls`
-    alone discards)."""
-    calls = []
-    malformed = 0
-    for raw in _TOOL_CALL_RE.findall(text):
-        try:
-            calls.append(json.loads(raw))
-        except json.JSONDecodeError:
-            malformed += 1
-    return calls, malformed
+from llm_internal.tool_protocol import parse_tool_calls, parse_tool_calls_detailed
 
 
 def summarize_tool_call_failures(
